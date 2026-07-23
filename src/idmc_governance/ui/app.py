@@ -22,6 +22,7 @@ import os
 import time as _time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -111,7 +112,11 @@ async def _govern(request: str, step: str | None = None) -> dict:
 
 
 # ── Health: poll all six servers, name the ones that are down ────────────────
-# During a demo, a silent failure is worse than a visible one.
+# During a demo, a silent failure is worse than a visible one — but so is a
+# false alarm. A long-running tool call (e.g. a 6-minute catalog browse) can
+# starve a server's event loop so the MCP handshake times out even though the
+# process is alive and working. If the port still accepts TCP, that server is
+# BUSY, not down.
 
 async def _probe_server(name: str, url: str) -> dict:
     async def _ping():
@@ -121,18 +126,31 @@ async def _probe_server(name: str, url: str) -> dict:
 
     try:
         await asyncio.wait_for(_ping(), timeout=4)
-        return {"server": name, "url": url, "ok": True}
+        return {"server": name, "url": url, "ok": True, "state": "online"}
     except (Exception, BaseExceptionGroup) as e:  # anyio wraps failures in groups
         root = _unwrap_exception(e)
-        return {"server": name, "url": url, "ok": False,
-                "error": (str(root) or type(root).__name__)[:200]}
+        parts = urlsplit(url)
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(parts.hostname, parts.port or 80), timeout=2)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+            return {"server": name, "url": url, "ok": True, "state": "busy",
+                    "note": "processing a long-running call"}
+        except Exception:  # noqa: BLE001
+            return {"server": name, "url": url, "ok": False, "state": "down",
+                    "error": (str(root) or type(root).__name__)[:200]}
 
 
 @app.get("/api/health")
 async def health():
     results = await asyncio.gather(*[_probe_server(n, u) for n, u in MCP_SERVERS.items()])
-    down = [r["server"] for r in results if not r["ok"]]
-    return {"servers": list(results), "down": down, "all_ok": not down,
+    down = [r["server"] for r in results if r["state"] == "down"]
+    busy = [r["server"] for r in results if r["state"] == "busy"]
+    return {"servers": list(results), "down": down, "busy": busy, "all_ok": not down,
             "total": len(results), "online": len(results) - len(down)}
 
 

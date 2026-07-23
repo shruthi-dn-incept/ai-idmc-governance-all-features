@@ -1519,6 +1519,12 @@ function HealthIndicator() {
       <span className="text-xs text-slate-400 font-medium">Checking MCP servers…</span>
     </div>
   );
+  if (health.all_ok && (health.busy || []).length > 0) return (
+    <div className="flex items-center gap-2" title={`${(health.busy || []).join(", ")} — processing a long-running call; new requests queue until it finishes`}>
+      <span className="w-2 h-2 rounded-full bg-amber-400 pulse inline-block"/>
+      <span className="text-xs text-amber-600 font-medium">{health.online}/{health.total} online — {(health.busy || []).join(", ")} busy</span>
+    </div>
+  );
   if (health.all_ok) return (
     <div className="flex items-center gap-2" title={(health.servers || []).map(s => s.server).join(", ")}>
       <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>
@@ -1526,7 +1532,7 @@ function HealthIndicator() {
     </div>
   );
   return (
-    <div className="flex items-center gap-2" title={(health.servers || []).filter(s => !s.ok).map(s => `${s.server}: ${s.error || "down"}`).join("\n")}>
+    <div className="flex items-center gap-2" title={(health.servers || []).filter(s => s.state === "down").map(s => `${s.server}: ${s.error || "down"}`).join("\n")}>
       <span className="w-2 h-2 rounded-full bg-red-500 pulse inline-block"/>
       <span className="text-xs text-red-500 font-semibold">{(health.down || []).join(", ")} down</span>
     </div>
