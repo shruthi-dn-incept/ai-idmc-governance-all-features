@@ -7,6 +7,11 @@ COPY . .
 
 RUN pip install --no-cache-dir -e .
 
+# start-ui.sh refuses to run outside a container (it overwrites .env). Azure
+# Container Apps runs on containerd, where /.dockerenv doesn't exist — declare
+# the container explicitly so the guard passes there too.
+ENV RUNNING_IN_CONTAINER=1
+
 EXPOSE 9080
 
 CMD ["bash", "scripts/start-ui.sh"]

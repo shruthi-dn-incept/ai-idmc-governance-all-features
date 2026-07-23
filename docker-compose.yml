@@ -1,6 +1,6 @@
 version: "3.9"
 
-# Scale test stack — ports 9765/9770/9080 (demov2 uses 8765/8770/8080)
+# Scale test stack — MCP servers on 9765-9770, UI on 9080 (demov2 uses 8765/8770/8080)
 services:
   governance-engine:
     build:
@@ -30,6 +30,52 @@ services:
     depends_on:
       - governance-engine
 
+  lineage-reporter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env.docker
+    environment:
+      LINEAGE_MCP_PORT: "9766"
+    command: python -m idmc_governance.servers.lineage_reporter
+    ports:
+      - "9766:9766"
+
+  glossary-manager:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env.docker
+    environment:
+      GLOSSARY_MCP_PORT: "9767"
+    command: python -m idmc_governance.servers.glossary_manager
+    ports:
+      - "9767:9767"
+
+  dq-monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env.docker
+    environment:
+      DQ_MONITOR_MCP_PORT: "9768"
+    command: python -m idmc_governance.servers.dq_monitor
+    ports:
+      - "9768:9768"
+
+  data-onboarding:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env.docker
+    environment:
+      DATA_ONBOARDING_MCP_PORT: "9769"
+    command: python -m idmc_governance.servers.data_onboarding
+    ports:
+      - "9769:9769"
+    volumes:
+      - ./.scan_cache:/app/.scan_cache
+
   governance-ui:
     build:
       context: .
@@ -39,9 +85,17 @@ services:
       GOVERNANCE_UI_PORT: "9080"
       GOVERNANCE_ENGINE_URL: "http://governance-engine:9765/mcp"
       AI_GOVERNANCE_URL: "http://ai-governance:9770/mcp"
+      LINEAGE_REPORTER_URL: "http://lineage-reporter:9766/mcp"
+      GLOSSARY_MANAGER_URL: "http://glossary-manager:9767/mcp"
+      DQ_MONITOR_URL: "http://dq-monitor:9768/mcp"
+      DATA_ONBOARDING_URL: "http://data-onboarding:9769/mcp"
     command: python -m idmc_governance.ui.app
     ports:
       - "9080:9080"
     depends_on:
       - governance-engine
       - ai-governance
+      - lineage-reporter
+      - glossary-manager
+      - dq-monitor
+      - data-onboarding

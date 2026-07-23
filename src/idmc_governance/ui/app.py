@@ -1,12 +1,16 @@
 """governance_ui.py — Branded wizard UI for the IDMC governance pipeline.
 
 Serves a React frontend on http://127.0.0.1:8080 and bridges REST calls
-to the two MCP servers:
-  ai-governance    :8770
+to the MCP servers (defaults; override via *_URL env vars or .env):
+  ai-governance     :8770
   governance-engine :8765
+  lineage-reporter  :8766
+  glossary-manager  :8767
+  dq-monitor        :8768
+  data-onboarding   :8769
 
 Usage:
-  python governance_ui.py
+  python -m idmc_governance.ui.app
 """
 
 from __future__ import annotations
@@ -28,8 +32,29 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
+from idmc_governance.common.paths import load_env_file
+
+# The MCP servers read the repo-root .env into their environment; the UI must do
+# the same or its server URLs / port disagree with where the servers actually
+# bind (e.g. a local .env pinning 9765/9770). Process env still wins.
+load_env_file()
+
 AI_GOVERNANCE_URL     = os.getenv("AI_GOVERNANCE_URL",     "http://127.0.0.1:8770/mcp")
 GOVERNANCE_ENGINE_URL = os.getenv("GOVERNANCE_ENGINE_URL", "http://127.0.0.1:8765/mcp")
+LINEAGE_REPORTER_URL  = os.getenv("LINEAGE_REPORTER_URL",  "http://127.0.0.1:8766/mcp")
+GLOSSARY_MANAGER_URL  = os.getenv("GLOSSARY_MANAGER_URL",  "http://127.0.0.1:8767/mcp")
+DQ_MONITOR_URL        = os.getenv("DQ_MONITOR_URL",        "http://127.0.0.1:8768/mcp")
+DATA_ONBOARDING_URL   = os.getenv("DATA_ONBOARDING_URL",   "http://127.0.0.1:8769/mcp")
+
+# All six servers, keyed by display name — drives /api/health and the UI header.
+MCP_SERVERS: dict[str, str] = {
+    "ai_governance":     AI_GOVERNANCE_URL,
+    "governance_engine": GOVERNANCE_ENGINE_URL,
+    "lineage_reporter":  LINEAGE_REPORTER_URL,
+    "glossary_manager":  GLOSSARY_MANAGER_URL,
+    "dq_monitor":        DQ_MONITOR_URL,
+    "data_onboarding":   DATA_ONBOARDING_URL,
+}
 
 def _read_env_file() -> dict[str, str]:
     env: dict[str, str] = {}
@@ -83,6 +108,32 @@ async def _govern(request: str, step: str | None = None) -> dict:
     if step:
         args["step"] = step
     return await _call(AI_GOVERNANCE_URL, "govern", args)
+
+
+# ── Health: poll all six servers, name the ones that are down ────────────────
+# During a demo, a silent failure is worse than a visible one.
+
+async def _probe_server(name: str, url: str) -> dict:
+    async def _ping():
+        async with streamablehttp_client(url) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+    try:
+        await asyncio.wait_for(_ping(), timeout=4)
+        return {"server": name, "url": url, "ok": True}
+    except (Exception, BaseExceptionGroup) as e:  # anyio wraps failures in groups
+        root = _unwrap_exception(e)
+        return {"server": name, "url": url, "ok": False,
+                "error": (str(root) or type(root).__name__)[:200]}
+
+
+@app.get("/api/health")
+async def health():
+    results = await asyncio.gather(*[_probe_server(n, u) for n, u in MCP_SERVERS.items()])
+    down = [r["server"] for r in results if not r["ok"]]
+    return {"servers": list(results), "down": down, "all_ok": not down,
+            "total": len(results), "online": len(results) - len(down)}
 
 
 @app.post("/api/reset")

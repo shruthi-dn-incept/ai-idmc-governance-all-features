@@ -1493,6 +1493,46 @@ const RESULT_RENDERERS = {
   withdraw_access:     WithdrawAccessResult,
 };
 
+// Polls all six MCP servers and NAMES the ones that are down. During a demo a
+// silent failure is worse than a visible one.
+function HealthIndicator() {
+  const [health, setHealth] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/health");
+        const d = await r.json();
+        if (alive) setHealth(d);
+      } catch (e) {
+        if (alive) setHealth({ servers: [], down: ["ui backend"], all_ok: false, online: 0, total: 6 });
+      }
+    };
+    check();
+    const iv = setInterval(check, 30000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  if (!health) return (
+    <div className="flex items-center gap-2">
+      <span className="w-2 h-2 rounded-full bg-slate-300 pulse inline-block"/>
+      <span className="text-xs text-slate-400 font-medium">Checking MCP servers…</span>
+    </div>
+  );
+  if (health.all_ok) return (
+    <div className="flex items-center gap-2" title={(health.servers || []).map(s => s.server).join(", ")}>
+      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>
+      <span className="text-xs text-slate-400 font-medium">MCP servers {health.online}/{health.total} online</span>
+    </div>
+  );
+  return (
+    <div className="flex items-center gap-2" title={(health.servers || []).filter(s => !s.ok).map(s => `${s.server}: ${s.error || "down"}`).join("\n")}>
+      <span className="w-2 h-2 rounded-full bg-red-500 pulse inline-block"/>
+      <span className="text-xs text-red-500 font-semibold">{(health.down || []).join(", ")} down</span>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 
 const LS_KEY = "idmc_gov_ui_state";
@@ -1867,8 +1907,7 @@ function App() {
             className="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-500 font-semibold bg-red-50 hover:bg-red-100 hover:border-red-400 transition-colors"
             title="Clear session (server + browser) and start fresh"
           >↺ New Session</button>
-          <div className="w-2 h-2 rounded-full bg-emerald-500"/>
-          <span className="text-xs text-slate-400 font-medium">MCP servers online</span>
+          <HealthIndicator/>
         </div>
       </header>
 
