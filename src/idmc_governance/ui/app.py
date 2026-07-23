@@ -173,6 +173,134 @@ async def get_config():
     }
 
 
+# ── Route ↔ ladder-step mapping ───────────────────────────────────────────────
+# Route names predate the 15-step ladder and are kept for compatibility
+# (documenting rather than renaming, per spec "Route naming drift"):
+#
+#   ladder step                    route
+#   ─────────────────────────────  ──────────────────────────────
+#    1 Discover Catalog            /api/step/discover
+#    2 Scan Table                  /api/step/scan
+#    3 Profile Data                /api/step/profile             (stub — Phase 1)
+#    4 Generate Taxonomy           /api/step/taxonomy
+#    5 Domain Structure            /api/step/domain_structure (+ /system_dataset substep)
+#    6 Curate Columns              /api/step/curate
+#    7 Recommend Rules             /api/step/recommend_rules     (stub — Phase 1)
+#    8 Create DQ Rules             /api/step/dq_rules            (route name: dq_rules)
+#    9 Schedule Execution          /api/step/schedule_execution  (stub — Phase 2)
+#   10 Publish to Catalog          /api/step/mcc_scan            (route name: mcc_scan)
+#                                  + /api/step/scores (upload_dq_scores)
+#                                  + /api/step/propagate_dq_score
+#   11 Monitor Quality             /api/step/monitor_quality     (stub — Phase 3)
+#   12 Create Collection           /api/step/create_collection   (composite of 4 tools)
+#   13 Publish to Marketplace      /api/step/publish_marketplace
+#   14 Configure Delivery          /api/step/configure_delivery  (composite of 4 tools)
+#   15 Consumer Access             /api/step/consumer_access
+#                                  + /approve_order /verify_access /withdraw_access
+#
+# /api/step/data_quality (dq_rules + scores in one call) predates the ladder’s
+# split of rules (step 8) from score upload (step 10); it stays for the run-all
+# path but no ladder step binds to it directly.
+
+
+# ── Stub routes: ladder steps whose phases have not landed ────────────────────
+# Each returns 501 so the ladder renders complete — a rung that says "next
+# release" instead of a dead rung. The owning phase replaces the stub in place.
+
+_STUB_STEPS = {
+    "profile":            ("Profile Data",        "Phase 1"),
+    "recommend_rules":    ("Recommend Rules",     "Phase 1"),
+    "schedule_execution": ("Schedule Execution",  "Phase 2"),
+    "monitor_quality":    ("Monitor Quality",     "Phase 3"),
+}
+
+
+def _stub_response(step_key: str):
+    label, phase = _STUB_STEPS[step_key]
+    raise HTTPException(
+        status_code=501,
+        detail=f"{label} ships in the next release ({phase}). "
+               f"The MCP tools behind it are deployed and reachable; this step's "
+               f"screen is not built yet.",
+    )
+
+
+@app.post("/api/step/profile")
+async def step_profile_stub():
+    _stub_response("profile")
+
+
+@app.post("/api/step/recommend_rules")
+async def step_recommend_rules_stub():
+    _stub_response("recommend_rules")
+
+
+@app.post("/api/step/schedule_execution")
+async def step_schedule_execution_stub():
+    _stub_response("schedule_execution")
+
+
+@app.post("/api/step/monitor_quality")
+async def step_monitor_quality_stub():
+    _stub_response("monitor_quality")
+
+
+# ── Profile session state (spec Phase 0 item 8) ───────────────────────────────
+# Profiling runs once at step 3; steps 4 (taxonomy) and 7 (recommend rules) read
+# the stored profile rather than re-running the most expensive operation in the
+# ladder. The UI backend owns this store because the producer (governance_engine)
+# and the consumers (ai_governance) are different servers and neither should
+# depend on a workflow concern that exists only because the UI sequences the
+# steps. Phase 1 defines the consumption shape.
+
+_PROFILE_STATE_PATH = Path(__file__).resolve().parents[3] / "state" / "profile_state.json"
+
+
+def _profile_key(connection: str, schema: str, table: str) -> str:
+    return f"{connection or '-'}/{schema or '-'}/{table}"
+
+
+def _read_profile_state() -> dict:
+    if not _PROFILE_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_PROFILE_STATE_PATH.read_text() or "{}")
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+class ProfileStateEntry(BaseModel):
+    connection: str = ""
+    schema: str = ""
+    table: str
+    profile: dict
+
+
+@app.get("/api/profile_state")
+async def get_profile_state(connection: str = "", schema: str = "", table: str = ""):
+    state = _read_profile_state()
+    if table:
+        entry = state.get(_profile_key(connection, schema, table))
+        return {"found": entry is not None, "entry": entry}
+    return {"count": len(state), "keys": sorted(state.keys())}
+
+
+@app.post("/api/profile_state")
+async def put_profile_state(req: ProfileStateEntry):
+    state = _read_profile_state()
+    key = _profile_key(req.connection, req.schema, req.table)
+    state[key] = {
+        "connection": req.connection,
+        "schema":     req.schema,
+        "table":      req.table,
+        "saved_at":   _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "profile":    req.profile,
+    }
+    _PROFILE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _PROFILE_STATE_PATH.write_text(json.dumps(state, indent=2))
+    return {"saved": key, "count": len(state)}
+
+
 # ── Step 1: Discover ──────────────────────────────────────────────────────────
 
 @app.post("/api/step/discover")
@@ -473,6 +601,30 @@ async def step_mcc_scan():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class PropagateScoreRequest(BaseModel):
+    asset_name: str
+    score: float
+    rule_occurrence_id: str | None = None
+    run_date: str | None = None          # ISO date, defaults to today server-side
+    dimension: str = "Accuracy"
+    passed_rows: int | None = None
+    failed_rows: int | None = None
+    total_rows: int | None = None
+
+
+@app.post("/api/step/propagate_dq_score")
+async def step_propagate_dq_score(req: PropagateScoreRequest):
+    """Single-asset corrective score push (step 10 substep) — the tool for
+    fixing or backfilling one DQRO/column without re-running a scan."""
+    try:
+        args = {k: v for k, v in req.model_dump().items() if v is not None}
+        return await _call(AI_GOVERNANCE_URL, "propagate_dq_score", args)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Step 10: Publish to Marketplace ──────────────────────────────────────────
 
 # ── Steps 10–13: Informatica Data Marketplace ────────────────────────────────
@@ -560,16 +712,32 @@ async def step_data_quality(req: EstimateRequest = EstimateRequest()):
 @app.post("/api/step/create_collection")
 async def step_create_collection():
     result = {}
+    # link_asset_to_collection must run LAST: it reads the collection_id that
+    # create_cdmp_data_collection writes into govern state. Without it, step 12
+    # creates a collection, reports success, and links no asset — a silent
+    # failure a steward only discovers at step 13, in front of a client.
     for tool, key in [
         ("create_cdmp_category",        "category"),
         ("create_cdmp_data_asset",      "data_asset"),
         ("create_cdmp_data_collection", "collection"),
+        ("link_asset_to_collection",    "link"),
     ]:
         try:
             result[key] = await _call(AI_GOVERNANCE_URL, tool, {})
         except Exception as e:
             result[key] = {"status": "failed", "error": str(e)}
     return result
+
+
+@app.post("/api/step/link_asset_to_collection")
+async def step_link_asset_to_collection():
+    """Standalone route for step 12's fourth substep button. Run before the
+    collection exists, the tool returns its in-band failed status with the
+    reason — the substep row renders it red."""
+    try:
+        return await _call(AI_GOVERNANCE_URL, "link_asset_to_collection", {})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/step/publish_marketplace_full")
