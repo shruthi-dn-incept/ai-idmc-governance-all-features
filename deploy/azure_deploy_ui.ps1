@@ -105,6 +105,10 @@ az containerapp create `
     "SNOWFLAKE_PRIVATE_KEY_B64=$($env_vars['SNOWFLAKE_PRIVATE_KEY_B64'])" `
     "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
     "GOVERNANCE_ENGINE_URL=http://127.0.0.1:9765/mcp" `
+    "LINEAGE_REPORTER_URL=http://127.0.0.1:9766/mcp" `
+    "GLOSSARY_MANAGER_URL=http://127.0.0.1:9767/mcp" `
+    "DQ_MONITOR_URL=http://127.0.0.1:9768/mcp" `
+    "DATA_ONBOARDING_URL=http://127.0.0.1:9769/mcp" `
     "AI_GOVERNANCE_URL=http://127.0.0.1:9770/mcp" `
     "CDQ_FOLDER_ID=$($env_vars['CDQ_FOLDER_ID'])" `
     "IDMC_DQ_CONNECTION_ID=$($env_vars['IDMC_DQ_CONNECTION_ID'])" `

@@ -49,6 +49,19 @@
 <script type="text/babel" data-presets="react,env">
 const { useState, useCallback, useRef, useEffect } = React;
 
+// ── Sections ──────────────────────────────────────────────────────────────────
+// Six-section application: Govern & Marketplace keep the step/status-dot pipeline
+// pattern; Operate/Monitor/Explore/Glossary/Admin are standalone screens.
+const SECTIONS = [
+  { id: "govern",      label: "Govern",      icon: "◈", kind: "pipeline", desc: "IDMC CDGC Onboarding Pipeline" },
+  { id: "marketplace", label: "Marketplace", icon: "◉", kind: "pipeline", desc: "Data Marketplace publication & consumer access" },
+  { id: "operate",     label: "Operate",     icon: "▶", kind: "screens",  desc: "CDI execution — tasks, schedules, taskflows, runs" },
+  { id: "monitor",     label: "Monitor",     icon: "◎", kind: "screens",  desc: "DQ scorecards, trends, alerts & remediation" },
+  { id: "explore",     label: "Explore",     icon: "⬡", kind: "screens",  desc: "Lineage, impact analysis & source tracing" },
+  { id: "glossary",    label: "Glossary",    icon: "◫", kind: "screens",  desc: "Business glossary health & term management" },
+  { id: "admin",       label: "Admin",       icon: "⚙", kind: "screens",  desc: "Connections, rule library, export & import" },
+];
+
 // ── Step definitions ──────────────────────────────────────────────────────────
 const STEPS = [
   { id: "discover",        num: 1, label: "Discover Catalog",         icon: "⬡", desc: "List all schemas and tables from the CDGC catalog." },
@@ -56,13 +69,31 @@ const STEPS = [
   { id: "taxonomy",        num: 3, label: "Generate Taxonomy",         icon: "◫", desc: "LLM generates a domain / subdomain / business-term tree from the scanned column metadata." },
   { id: "domain_structure",num: 4, label: "Domain Structure",          icon: "◧", desc: "Review and approve the proposed domain hierarchy, then write it to CDGC and register the source system and dataset." },
   { id: "curate",          num: 5, label: "Curate Columns",            icon: "◩", desc: "Link every column to its matching business term." },
-  { id: "data_quality",           num: 6,  label: "Data Quality",                    icon: "◎", desc: "Creates DQ rules and generates interim scores for all registered rule occurrences in CDGC." },
-  { id: "publish_governance",     num: 7,  label: "Publish to Governance Catalog",        icon: "◉", desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data (5000 rows) and publish real DQ scores to the Governance Catalog." },
+  { id: "profile",         num: 6, label: "Profile Data",              icon: "◍", desc: "Measure what is actually in the data — null counts, distinct counts, min/max, patterns — per column." },
+  { id: "recommend_rules", num: 7, label: "Recommend Rules",           icon: "❋", desc: "Evidence-backed DQ rule recommendations derived from the profiling statistics. Select the ones to carry into Data Quality." },
+  { id: "data_quality",           num: 8,  label: "Data Quality",                    icon: "◎", desc: "Creates DQ rules and generates interim scores for all registered rule occurrences in CDGC." },
+  { id: "publish_governance",     num: 9,  label: "Publish to Governance Catalog",        icon: "◉", desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data (5000 rows) and publish real DQ scores to the Governance Catalog." },
 ];
+
+const MARKETPLACE_STEPS = [
+  { id: "create_collection",        num: 1, label: "Create Collection",       icon: "◈", desc: "Create the CDMP category, data asset and data collection for the governed dataset." },
+  { id: "link_asset",               num: 2, label: "Link Asset",              icon: "◧", desc: "Link the governed data asset to its Data Collection (bulk CSV upload)." },
+  { id: "publish_marketplace_full", num: 3, label: "Publish to Marketplace",  icon: "◉", desc: "Publish the collection so consumers can discover and request it." },
+  { id: "configure_delivery",       num: 4, label: "Configure Delivery",      icon: "◫", desc: "Usage contexts, delivery template, terms of use and delivery target." },
+  { id: "consumer_access",          num: 5, label: "Consumer Access",         icon: "◩", desc: "Place a consumer order for the collection (with optional auto-approval)." },
+  { id: "verify_access",            num: 6, label: "Verify Access",           icon: "✓", desc: "Confirm the order was approved and fulfilled." },
+  { id: "withdraw_access",          num: 7, label: "Withdraw Access",         icon: "⊗", desc: "Revoke consumer access — the full lifecycle including offboarding." },
+];
+
+const PIPELINE_STEPS = { govern: STEPS, marketplace: MARKETPLACE_STEPS };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const STATUS = { idle: "idle", running: "running", done: "done", error: "error", skipped: "skipped" };
-const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "data_quality", "publish_governance", "create_collection", "publish_marketplace_full", "configure_delivery", "consumer_access", "verify_access", "withdraw_access"]);
+const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "profile", "recommend_rules", "data_quality", "publish_governance", "create_collection", "link_asset", "publish_marketplace_full", "configure_delivery", "consumer_access", "verify_access", "withdraw_access"]);
+
+// One shared interceptor: HTTP 401 from any bridge route means the IDMC session
+// died (REPO_38205) — every screen surfaces the same "reconnect" affordance.
+let notifySessionExpired = null;
 
 async function apiPost(path, body = {}, signal = undefined) {
   const r = await fetch(path, {
@@ -73,9 +104,36 @@ async function apiPost(path, body = {}, signal = undefined) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail || r.statusText);
+    const msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || r.statusText);
+    if (r.status === 401 && notifySessionExpired) notifySessionExpired(msg);
+    const e = new Error(msg);
+    e.status = r.status;
+    throw e;
   }
   return r.json();
+}
+
+async function apiGet(path, signal = undefined) {
+  const r = await fetch(path, { signal });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    const msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || r.statusText);
+    if (r.status === 401 && notifySessionExpired) notifySessionExpired(msg);
+    const e = new Error(msg);
+    e.status = r.status;
+    throw e;
+  }
+  return r.json();
+}
+
+// Shared fire-then-poll helper — profiling, export/import and job runs all use it.
+function usePolling(fn, intervalMs, active) {
+  useEffect(() => {
+    if (!active) return;
+    fn();
+    const iv = setInterval(fn, intervalMs);
+    return () => clearInterval(iv);
+  }, [active, intervalMs]);
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -1477,15 +1535,1865 @@ function PublishGovernanceResult({ data }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Shared primitives for the standalone sections
+// ══════════════════════════════════════════════════════════════════════════════
+
+const INPUT_CLS = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100";
+
+function Field({ label, hint, children }) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-500 font-medium mb-1">{label}</label>
+      {children}
+      {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function PrimaryButton({ onClick, running, disabled, children, tone = "indigo" }) {
+  const enabled = !running && !disabled;
+  const toneCls = tone === "emerald"
+    ? "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-md shadow-emerald-100"
+    : "bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-200";
+  return (
+    <button onClick={onClick} disabled={!enabled}
+      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all
+        ${enabled ? toneCls : "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200"}`}>
+      {running ? <><Spinner/> Running…</> : children}
+    </button>
+  );
+}
+
+function ErrorBox({ error }) {
+  if (!error) return null;
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+      <div className="text-xs font-semibold text-red-600 mb-1 uppercase tracking-wider">Error</div>
+      <div className="text-sm text-red-700 font-mono break-words">{String(error)}</div>
+    </div>
+  );
+}
+
+// Empty results that are legitimate need copy explaining WHY — otherwise they
+// read as a broken feature in front of a client.
+function EmptyState({ icon = "◌", title, body }) {
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
+      <span className="text-2xl">{icon}</span>
+      <div>
+        <div className="text-sm font-semibold text-amber-800">{title}</div>
+        <div className="text-xs text-amber-700 mt-1 leading-relaxed">{body}</div>
+      </div>
+    </div>
+  );
+}
+
+function DimChip({ dim }) {
+  return <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs">{dim || "—"}</span>;
+}
+
+function SevBadge({ severity }) {
+  const s = (severity || "").toUpperCase();
+  const cls = s === "HIGH"   ? "bg-red-100 text-red-700 border-red-300"
+            : s === "MEDIUM" ? "bg-amber-100 text-amber-700 border-amber-300"
+            :                  "bg-emerald-100 text-emerald-700 border-emerald-300";
+  return <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cls}`}>{s || "LOW"}</span>;
+}
+
+function SectionTabs({ tabs, active, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1 border-b border-slate-300 pb-0 mb-5">
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => onChange(t.id)}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg border border-b-0 transition-colors
+            ${active === t.id
+              ? "bg-slate-50 border-slate-300 text-indigo-700 font-semibold"
+              : "bg-transparent border-transparent text-slate-500 hover:text-slate-700"}`}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DataTable({ columns, rows, empty }) {
+  if (!rows || rows.length === 0) return empty || <div className="text-xs text-slate-400 italic p-3">No entries.</div>;
+  return (
+    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-100 text-slate-500 uppercase tracking-wider">
+          <tr>{columns.map(c => <th key={c.key} className="px-3 py-2 text-left whitespace-nowrap">{c.label}</th>)}</tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {rows.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              {columns.map(c => <td key={c.key} className="px-3 py-2 text-slate-700 align-top">{c.render ? c.render(r) : (r[c.key] ?? "—")}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Shared renderer for orchestrator step reports (onboard_and_govern,
+// profile_and_govern, run_governance_pipeline).
+function PipelineStepsList({ steps }) {
+  if (!steps || !steps.length) return null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+      {steps.map((s, i) => {
+        const st = (s.status || "").toUpperCase();
+        const ok = st === "SUCCESS";
+        const failed = st === "FAILED";
+        const icon = ok ? "✓" : failed ? "✗" : "⊘";
+        const color = ok ? "text-emerald-600" : failed ? "text-red-500" : "text-amber-500";
+        return (
+          <div key={i} className="flex items-start gap-3 px-4 py-2.5">
+            <span className={`text-sm font-bold w-4 shrink-0 ${color}`}>{icon}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-700 font-mono">{s.step}</span>
+                <span className={`text-xs font-medium ${color}`}>{st}</span>
+                {s.elapsed_ms != null && <span className="text-xs text-slate-400">{(s.elapsed_ms / 1000).toFixed(1)}s</span>}
+              </div>
+              {s.error  && <div className="text-xs text-red-500 mt-0.5 break-words">{s.error}</div>}
+              {s.reason && <div className="text-xs text-amber-600 mt-0.5">{s.reason}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Header widgets ────────────────────────────────────────────────────────────
+
+// Polls all six MCP servers and NAMES the ones that are down. During a demo a
+// silent failure is worse than a visible one.
+function HealthIndicator() {
+  const [health, setHealth] = useState(null);
+  usePolling(async () => {
+    try { setHealth(await apiGet("/api/health")); }
+    catch (e) { setHealth({ servers: [], down: ["ui backend"], all_ok: false, online: 0, total: 6 }); }
+  }, 30000, true);
+
+  if (!health) return (
+    <div className="flex items-center gap-2">
+      <span className="w-2 h-2 rounded-full bg-slate-300 pulse inline-block"/>
+      <span className="text-xs text-slate-400 font-medium">Checking MCP servers…</span>
+    </div>
+  );
+  if (health.all_ok) return (
+    <div className="flex items-center gap-2" title={(health.servers || []).map(s => s.server).join(", ")}>
+      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>
+      <span className="text-xs text-slate-400 font-medium">MCP servers {health.online}/{health.total} online</span>
+    </div>
+  );
+  return (
+    <div className="flex items-center gap-2" title={(health.servers || []).filter(s => !s.ok).map(s => `${s.server}: ${s.error || "down"}`).join("\n")}>
+      <span className="w-2 h-2 rounded-full bg-red-500 pulse inline-block"/>
+      <span className="text-xs text-red-500 font-semibold">{(health.down || []).join(", ")} down</span>
+    </div>
+  );
+}
+
+function SessionExpiredBanner({ message, onDismiss }) {
+  if (!message) return null;
+  return (
+    <div className="bg-red-50 border-b border-red-200 px-6 py-2.5 flex items-center gap-3 shrink-0">
+      <span className="text-lg">⚠️</span>
+      <div className="flex-1">
+        <span className="text-sm font-semibold text-red-800">IDMC session expired — </span>
+        <span className="text-xs text-red-700">refresh the session (scripts/refresh-session.sh or re-login), then re-run the action.</span>
+      </div>
+      <button onClick={onDismiss} className="text-xs px-3 py-1 rounded-lg border border-red-300 text-red-600 font-semibold bg-white hover:bg-red-100">Dismiss</button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 1 — Profile Data & Recommend Rules (Govern steps 6-7)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function fmtPct(v) {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return (n <= 1 ? n * 100 : n).toFixed(1) + "%";
+}
+
+function ProfileResult({ data }) {
+  const cols = data?.columns || {};
+  const names = Object.keys(cols);
+  const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally — direct Snowflake query"
+                  : data?.profile_path === "cdgc_catalog"     ? "Informatica profiling service (via CDGC catalog)"
+                  : "Informatica profiling service";
+  const profiled = data?.profiled_count;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Rows profiled" value={(data?.total_rows ?? "—").toLocaleString ? (data?.total_rows ?? 0).toLocaleString() : (data?.total_rows ?? "—")}/>
+        <SummaryCard label="Columns" value={names.length}/>
+        <SummaryCard label="Statistics path" value={data?.profile_path === "snowflake_direct" ? "Snowflake direct" : "IDMC service"} color="text-slate-600"/>
+      </div>
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
+        {pathLabel} — the two paths have different fidelity; this panel always states which one produced the numbers.
+      </div>
+      {profiled === 0 && (
+        <EmptyState icon="⏱" title="Profile ran, statistics not yet in the catalog"
+          body="CDGC ingests profiling statistics asynchronously — results typically appear a few minutes after the profiling job completes. Re-run this step shortly, or use 'Compute locally' for immediate statistics."/>
+      )}
+      {names.length > 0 && (
+        <DataTable
+          columns={[
+            { key: "name",     label: "Column",   render: r => <span className="font-mono font-semibold">{r.name}</span> },
+            { key: "type",     label: "Type",     render: r => <span className="text-slate-500">{r.stats.data_type || "—"}</span> },
+            { key: "nulls",    label: "Nulls",    render: r => {
+                const pct = r.stats.null_pct;
+                const bad = Number(pct) > (Number(pct) <= 1 ? 0.1 : 10);
+                return <span className={bad ? "text-red-600 font-semibold" : ""}>{r.stats.null_count ?? "—"} ({fmtPct(pct)})</span>;
+              } },
+            { key: "distinct", label: "Distinct", render: r => r.stats.distinct_count ?? "—" },
+            { key: "min",      label: "Min",      render: r => <span className="font-mono">{String(r.stats.min_value ?? "—").slice(0, 24)}</span> },
+            { key: "max",      label: "Max",      render: r => <span className="font-mono">{String(r.stats.max_value ?? "—").slice(0, 24)}</span> },
+            { key: "top",      label: "Top value", render: r => {
+                const tv = (r.stats.top_values || [])[0];
+                return tv ? <span className="font-mono">{String(tv.value).slice(0, 20)} ×{tv.count}</span> : "—";
+              } },
+          ]}
+          rows={names.map(n => ({ name: n, stats: cols[n] || {} }))}
+        />
+      )}
+      {names.length === 0 && !profiled && (
+        <EmptyState title="No column statistics returned"
+          body="This connector may not be able to enumerate columns through the profiling service. Use 'Compute locally' to query the warehouse directly."/>
+      )}
+    </div>
+  );
+}
+
+// Selectable recommendations — same checkbox pattern as Domain Structure approval.
+function RecommendRulesResult({ data, recSelected, onToggleRec, onSetAllRecs }) {
+  const recs = data?.recommendations || [];
+  if (!recs.length) return (
+    <EmptyState icon="✓" title="No rule recommendations — the profiled data looks healthy"
+      body="The profiling statistics did not cross any recommendation thresholds (nulls, blanks, ranges, patterns, staleness, duplicates). You can still add rules manually in the Data Quality step."/>
+  );
+  const selected = recSelected || new Set();
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Recommendations" value={data?.recommendation_count ?? recs.length}/>
+        <SummaryCard label="Selected" value={selected.size} color="text-emerald-600"/>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{selected.size} / {recs.length} selected — flows into the Data Quality step</span>
+        <div className="flex gap-2">
+          <button onClick={() => onSetAllRecs(true)}  className="text-xs px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:border-brand hover:text-brand transition-colors">Select all</button>
+          <button onClick={() => onSetAllRecs(false)} className="text-xs px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:border-red-300 hover:text-red-500 transition-colors">Deselect all</button>
+        </div>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm divide-y divide-slate-100">
+        {recs.map((r, i) => {
+          const key = r.suggested_rule_name || `${r.column_name}-${r.dimension}-${i}`;
+          const isSel = selected.has(key);
+          return (
+            <div key={key} className={`flex items-start gap-3 px-4 py-3 transition-colors ${isSel ? "bg-white hover:bg-slate-50" : "bg-slate-50 opacity-60"}`}>
+              <input type="checkbox" checked={isSel} onChange={() => onToggleRec(key)}
+                className="accent-violet-600 cursor-pointer w-3.5 h-3.5 shrink-0 mt-0.5"/>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-mono font-semibold text-slate-800">{r.column_name}</span>
+                  <DimChip dim={r.dimension}/>
+                  <SevBadge severity={r.severity}/>
+                  {r.affected_rows != null && <span className="text-xs text-slate-400">{r.affected_rows.toLocaleString ? r.affected_rows.toLocaleString() : r.affected_rows} rows affected</span>}
+                </div>
+                {/* The profiling evidence behind the recommendation — the differentiator */}
+                <div className="text-xs text-slate-600 mt-1">{r.rationale}</div>
+                <div className="text-xs text-slate-400 mt-0.5 font-mono">{r.suggested_rule_name} · template: {r.rule_template}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LinkAssetResult({ data }) {
+  const ok = (data?.status || "").includes("upload") || data?.csv_upload?.status === "uploaded";
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-amber-600"}/>
+        <SummaryCard label="Collection" value={(data?.collection_name || "—").slice(0, 28)} color="text-slate-600"/>
+      </div>
+      <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
+        <div className="flex items-start gap-2">
+          <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Asset</span>
+          <span className="text-xs font-medium text-slate-700">{data?.asset_name || "—"}</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Collection ID</span>
+          <span className="text-xs font-mono text-brand break-all">{data?.collection_id || "—"}</span>
+        </div>
+        {data?.csv_upload && <UploadBadge upload={data.csv_upload} label="Link CSV"/>}
+      </div>
+      {data?.error && <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{data.error}</pre></div>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 2 — Operate section
+// ══════════════════════════════════════════════════════════════════════════════
+
+const JOB_TERMINAL = new Set(["SUCCESS", "FAILED", "WARNING", "STOPPED"]);
+
+function JobStateChip({ label }) {
+  const l = (label || "").toUpperCase();
+  const cls = l === "SUCCESS" ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+            : l === "FAILED"  ? "bg-red-100 text-red-700 border-red-300"
+            : l === "WARNING" ? "bg-amber-100 text-amber-700 border-amber-300"
+            : l === "STOPPED" ? "bg-slate-200 text-slate-600 border-slate-300"
+            :                   "bg-indigo-100 text-indigo-700 border-indigo-300";
+  const running = !JOB_TERMINAL.has(l);
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-semibold ${cls}`}>
+      {running && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 pulse inline-block"/>}
+      {label || "…"}
+    </span>
+  );
+}
+
+// M_DQ_Generic is a hard dependency of DQ execution — detect its absence on
+// screen load and show setup guidance instead of failing at run time.
+function TemplateGuard({ config }) {
+  if (!config || config.has_dq_template) return null;
+  return (
+    <EmptyState icon="🔧" title="DQ execution template not configured (M_DQ_Generic)"
+      body="Mapping-task generation binds the parameterized M_DQ_Generic mapping. Import it into this org (Data Integration → Import), then set IDMC_DQ_TEMPLATE_MAPPING_ID in .env to its published mapping id. Until then, 'New task from rule' is disabled."/>
+  );
+}
+
+function OperateTasksScreen({ config }) {
+  const [data, setData]       = useState(null);
+  const [rules, setRules]     = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+  const [form, setForm]       = useState({ source_table: "", rule_spec_id: "", task_name: "" });
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated]   = useState(null);
+  const [createError, setCreateError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      setData(await apiPost("/api/operate/tasks/list", { top: 100 }));
+      try { setRules((await apiPost("/api/admin/rules/list", { top: 100 })).rules || []); } catch (e) {}
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, []);
+
+  const createTask = async () => {
+    setCreating(true); setCreateError(null); setCreated(null);
+    try {
+      const body = { source_table: form.source_table };
+      if (form.rule_spec_id) body.rule_spec_id = form.rule_spec_id;
+      if (form.task_name)    body.task_name    = form.task_name;
+      setCreated(await apiPost("/api/operate/tasks/generate_dq", body));
+      load();
+    } catch (e) { setCreateError(e.message); }
+    finally { setCreating(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <TemplateGuard config={config}/>
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">New DQ task from rule</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Source table"><input className={INPUT_CLS + " font-mono"} placeholder="SCHEMA/TABLE or TABLE" value={form.source_table} onChange={e => setForm(f => ({ ...f, source_table: e.target.value }))}/></Field>
+          <Field label="Rule specification">
+            <select className={INPUT_CLS} value={form.rule_spec_id} onChange={e => setForm(f => ({ ...f, rule_spec_id: e.target.value }))}>
+              <option value="">No rule binding (template defaults)</option>
+              {rules.map(r => <option key={r.id} value={r.id}>{r.name}{r.dimension ? ` — ${r.dimension}` : ""}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Task name (optional)"><input className={INPUT_CLS} placeholder="auto-generated when blank" value={form.task_name} onChange={e => setForm(f => ({ ...f, task_name: e.target.value }))}/></Field>
+        <PrimaryButton onClick={createTask} running={creating} disabled={!form.source_table || (config && !config.has_dq_template)}>＋ Create mapping task</PrimaryButton>
+        <ErrorBox error={createError}/>
+        {created && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+            ✓ Task <strong>{created.name}</strong> created (id <span className="font-mono">{created.id}</span>, params: {(created.parameter_names || []).join(", ") || "—"})
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Mapping tasks {data ? `(${data.count} of ${data.total})` : ""}</div>
+        <button onClick={load} className="text-xs text-slate-400 hover:text-brand font-medium">{loading ? "Loading…" : "↻ Refresh"}</button>
+      </div>
+      <ErrorBox error={error}/>
+      <DataTable
+        columns={[
+          { key: "name", label: "Name", render: r => <span className="font-medium">{r.name}</span> },
+          { key: "id", label: "Task ID", render: r => <span className="font-mono text-slate-500">{r.id}</span> },
+          { key: "mappingId", label: "Mapping", render: r => <span className="font-mono text-slate-500">{r.mappingId || "—"}</span> },
+          { key: "scheduleId", label: "Schedule", render: r => r.scheduleId ? <span className="text-emerald-600 font-medium">scheduled</span> : <span className="text-slate-400">—</span> },
+          { key: "updateTime", label: "Updated" },
+        ]}
+        rows={data?.tasks || []}
+        empty={loading ? <div className="p-4"><Spinner/></div> : <div className="text-xs text-slate-400 italic p-3">No mapping tasks in this org yet — create one above.</div>}
+      />
+    </div>
+  );
+}
+
+// Presets match the comparison-document wording exactly: daily, hourly, weekly, monthly.
+const SCHEDULE_PRESETS = [
+  { id: "Hourly",  label: "Hourly" },
+  { id: "Daily",   label: "Daily" },
+  { id: "Weekly",  label: "Weekly" },
+  { id: "Monthly", label: "Monthly" },
+];
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+function OperateSchedulesScreen() {
+  const [form, setForm] = useState({ name: "", interval: "Daily", startLocal: "", frequency: "", day_of_month: "", days: {} });
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [created, setCreated] = useState(null);
+
+  const submit = async () => {
+    setRunning(true); setError(null);
+    try {
+      if (!form.startLocal) throw new Error("Pick a first-run date & time.");
+      const iso = new Date(form.startLocal).toISOString();   // always .000Z — the API silently mis-fires on malformed timestamps
+      const body = { name: form.name, interval: form.interval, start_time: iso, start_time_utc: iso };
+      if (form.frequency) body.frequency = parseInt(form.frequency, 10);
+      if (form.interval === "Weekly") WEEKDAYS.forEach(d => { if (form.days[d]) body[d] = true; });
+      if (form.interval === "Monthly" && form.day_of_month) body.day_of_month = parseInt(form.day_of_month, 10);
+      setCreated(await apiPost("/api/operate/schedules/create", body));
+    } catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">New execution schedule</div>
+        <Field label="Schedule name"><input className={INPUT_CLS} placeholder="e.g. Nightly_DQ_Run" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}/></Field>
+        <Field label="Recurrence">
+          <div className="flex gap-2">
+            {SCHEDULE_PRESETS.map(p => (
+              <button key={p.id} onClick={() => setForm(f => ({ ...f, interval: p.id }))}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all
+                  ${form.interval === p.id ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="First run (local time)" hint="Sent to IDMC as UTC (.000Z)">
+            <input type="datetime-local" className={INPUT_CLS} value={form.startLocal} onChange={e => setForm(f => ({ ...f, startLocal: e.target.value }))}/>
+          </Field>
+          {(form.interval === "Hourly" || form.interval === "Daily") && (
+            <Field label={form.interval === "Hourly" ? "Every N hours" : "Every N days"}>
+              <select className={INPUT_CLS} value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))}>
+                <option value="">1 (default)</option>
+                {(form.interval === "Hourly" ? [2, 3, 4, 6, 8, 12] : [2, 3, 5, 7, 10, 14, 30]).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </Field>
+          )}
+          {form.interval === "Monthly" && (
+            <Field label="Day of month"><input type="number" min="1" max="28" className={INPUT_CLS} value={form.day_of_month} onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))}/></Field>
+          )}
+        </div>
+        {form.interval === "Weekly" && (
+          <Field label="Run on">
+            <div className="flex gap-2 flex-wrap">
+              {WEEKDAYS.map(d => (
+                <label key={d} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all
+                    ${form.days[d] ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600"}`}>
+                  <input type="checkbox" className="hidden" checked={!!form.days[d]} onChange={() => setForm(f => ({ ...f, days: { ...f.days, [d]: !f.days[d] } }))}/>
+                  {d.toUpperCase()}
+                </label>
+              ))}
+            </div>
+          </Field>
+        )}
+        <PrimaryButton onClick={submit} running={running} disabled={!form.name || !form.startLocal}>＋ Create schedule</PrimaryButton>
+        <ErrorBox error={error}/>
+        {created && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-1">
+            <div>✓ Schedule <strong>{created.name}</strong> created — {created.interval}{created.frequency ? ` (every ${created.frequency})` : ""}</div>
+            <div className="font-mono text-emerald-700">id {created.id} · first run {created.startTime}</div>
+            <div className="text-emerald-600">Attach it to a mapping task in the Mapping Tasks tab, or reference it from a taskflow.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OperateTaskflowsScreen() {
+  const [tasks, setTasks]   = useState([]);
+  const [picked, setPicked] = useState([]);        // ordered task ids
+  const [name, setName]     = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError]   = useState(null);
+  const [created, setCreated] = useState(null);
+
+  useEffect(() => {
+    apiPost("/api/operate/tasks/list", { top: 100 }).then(d => setTasks(d.tasks || [])).catch(e => setError(e.message));
+  }, []);
+
+  const toggle = (id) => setPicked(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+
+  const submit = async () => {
+    setRunning(true); setError(null);
+    try {
+      const flowTasks = picked.map(id => {
+        const t = tasks.find(x => x.id === id);
+        return { taskId: id, type: "MTT", name: t?.name || id };
+      });
+      setCreated(await apiPost("/api/operate/taskflows/create", { name, tasks: flowTasks }));
+    } catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">New linear taskflow</div>
+        <Field label="Taskflow name"><input className={INPUT_CLS} placeholder="e.g. TF_Nightly_Governance" value={name} onChange={e => setName(e.target.value)}/></Field>
+        <Field label="Tasks — click to add in run order" hint={picked.length ? `Order: ${picked.map(id => (tasks.find(t => t.id === id)?.name) || id).join(" → ")}` : "Tasks run sequentially in the order selected"}>
+          <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 max-h-64 overflow-y-auto scrollbar-thin">
+            {tasks.map(t => {
+              const idx = picked.indexOf(t.id);
+              return (
+                <button key={t.id} onClick={() => toggle(t.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${idx >= 0 ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
+                  <span className={`w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold shrink-0 ${idx >= 0 ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-400"}`}>{idx >= 0 ? idx + 1 : "+"}</span>
+                  <span className="text-sm font-medium text-slate-700 truncate">{t.name}</span>
+                  <span className="ml-auto text-xs font-mono text-slate-400">{t.id}</span>
+                </button>
+              );
+            })}
+            {!tasks.length && <div className="text-xs text-slate-400 italic p-3">No mapping tasks yet — create one in the Mapping Tasks tab first.</div>}
+          </div>
+        </Field>
+        <PrimaryButton onClick={submit} running={running} disabled={!name || picked.length === 0}>＋ Create taskflow ({picked.length} tasks)</PrimaryButton>
+        <ErrorBox error={error}/>
+        {created && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+            ✓ Taskflow <strong>{created.name}</strong> created — {created.taskCount} tasks, id <span className="font-mono">{created.id}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OperateRunsScreen() {
+  const [tasks, setTasks]     = useState([]);
+  const [taskId, setTaskId]   = useState("");
+  const [starting, setStarting] = useState(false);
+  const [error, setError]     = useState(null);
+  const [runs, setRuns]       = useState([]);   // {runId, taskId, taskName, entry, state_label}
+
+  useEffect(() => {
+    apiPost("/api/operate/tasks/list", { top: 100 }).then(d => setTasks(d.tasks || [])).catch(e => setError(e.message));
+  }, []);
+
+  const anyLive = runs.some(r => !JOB_TERMINAL.has((r.state_label || "").toUpperCase()));
+
+  usePolling(async () => {
+    const live = runs.filter(r => !JOB_TERMINAL.has((r.state_label || "").toUpperCase()));
+    for (const r of live) {
+      try {
+        const st = await apiPost("/api/operate/job_status", { run_id: r.runId, task_id: r.taskId });
+        const entry = st.first || (st.entries || [])[0];
+        if (entry) {
+          setRuns(prev => prev.map(p => p.runId === r.runId ? { ...p, entry, state_label: entry.state_label, source: st.source } : p));
+        }
+        // An empty monitor response is NOT failure — the job may have moved to the log.
+      } catch (e) {}
+    }
+  }, 5000, anyLive);
+
+  const trigger = async () => {
+    setStarting(true); setError(null);
+    try {
+      const out = await apiPost("/api/operate/run", { task_id: taskId });
+      const t = tasks.find(x => x.id === taskId);
+      setRuns(prev => [{ runId: out.runId, taskId, taskName: out.taskName || t?.name || taskId, entry: null, state_label: "QUEUED" }, ...prev]);
+    } catch (e) { setError(e.message); }
+    finally { setStarting(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Trigger a job</div>
+        <div className="flex gap-3 items-end">
+          <div className="flex-1">
+            <Field label="Mapping task">
+              <select className={INPUT_CLS} value={taskId} onChange={e => setTaskId(e.target.value)}>
+                <option value="">Select a task…</option>
+                {tasks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <PrimaryButton onClick={trigger} running={starting} disabled={!taskId}>▶ Run now</PrimaryButton>
+        </div>
+        <ErrorBox error={error}/>
+      </div>
+
+      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Job runs (live — polls the activity monitor, falls back to the activity log)</div>
+      {runs.length === 0
+        ? <div className="text-xs text-slate-400 italic p-3 bg-white border border-slate-200 rounded-xl">No runs triggered this session.</div>
+        : (
+          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white divide-y divide-slate-100">
+            {runs.map(r => (
+              <div key={r.runId} className="px-4 py-3 flex items-center gap-4">
+                <JobStateChip label={r.state_label}/>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-700 truncate">{r.taskName}</div>
+                  <div className="text-xs text-slate-400 font-mono">run {r.runId}{r.entry?.start_time ? ` · started ${r.entry.start_time}` : ""}{r.entry?.end_time ? ` · ended ${r.entry.end_time}` : ""}</div>
+                  {r.entry?.error_message && <div className="text-xs text-red-500 mt-0.5 break-words">{r.entry.error_message}</div>}
+                </div>
+                {r.entry && (
+                  <div className="text-xs text-slate-500 text-right shrink-0">
+                    <div><span className="text-emerald-600 font-semibold">{r.entry.success_target_rows ?? "—"}</span> rows ok</div>
+                    <div><span className={r.entry.failed_target_rows ? "text-red-500 font-semibold" : ""}>{r.entry.failed_target_rows ?? "—"}</span> failed</div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+const DQ_DIMENSIONS = ["COMPLETENESS", "VALIDITY", "ACCURACY", "CONSISTENCY", "TIMELINESS", "UNIQUENESS"];
+
+function OperateFullPipelineScreen() {
+  const [form, setForm] = useState({ rule_name: "", rule_dimension: "COMPLETENESS", source_table: "", schedule: false, startLocal: "", schedule_interval: "Daily", run_now: false });
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [report, setReport]   = useState(null);
+
+  const submit = async () => {
+    setRunning(true); setError(null); setReport(null);
+    try {
+      const body = {
+        rule_name: form.rule_name,
+        rule_dimension: form.rule_dimension,
+        goal: "End-to-end governance pipeline from the Operate console",
+        run_now: form.run_now,
+      };
+      if (form.source_table) { body.source_table = form.source_table; body.target_table = form.source_table; }
+      if (form.schedule && form.startLocal) {
+        body.schedule_name = `SCH_${form.rule_name}`;
+        body.schedule_start_time = new Date(form.startLocal).toISOString();
+        body.schedule_interval = form.schedule_interval;
+      }
+      setReport(await apiPost("/api/operate/pipeline", body));
+    } catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Full pipeline — rule → mapping task → schedule → CDGC registration → run → score</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Rule name"><input className={INPUT_CLS} placeholder="e.g. DQ_CUSTOMER_EMAIL_VALID" value={form.rule_name} onChange={e => setForm(f => ({ ...f, rule_name: e.target.value }))}/></Field>
+          <Field label="Dimension">
+            <select className={INPUT_CLS} value={form.rule_dimension} onChange={e => setForm(f => ({ ...f, rule_dimension: e.target.value }))}>
+              {DQ_DIMENSIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Source table (optional — enables the mapping-task step)"><input className={INPUT_CLS + " font-mono"} placeholder="SCHEMA/TABLE" value={form.source_table} onChange={e => setForm(f => ({ ...f, source_table: e.target.value }))}/></Field>
+        <div className="flex items-center gap-6">
+          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" className="accent-violet-600" checked={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.checked }))}/> Create schedule
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" className="accent-violet-600" checked={form.run_now} onChange={e => setForm(f => ({ ...f, run_now: e.target.checked }))}/> Run immediately
+          </label>
+        </div>
+        {form.schedule && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="First run"><input type="datetime-local" className={INPUT_CLS} value={form.startLocal} onChange={e => setForm(f => ({ ...f, startLocal: e.target.value }))}/></Field>
+            <Field label="Recurrence">
+              <select className={INPUT_CLS} value={form.schedule_interval} onChange={e => setForm(f => ({ ...f, schedule_interval: e.target.value }))}>
+                {SCHEDULE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
+        <PrimaryButton onClick={submit} running={running} disabled={!form.rule_name}>▶ Run full pipeline</PrimaryButton>
+        <ErrorBox error={error}/>
+      </div>
+
+      {report && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryCard label="Steps OK"  value={report.summary?.ok ?? 0} color="text-emerald-600"/>
+            <SummaryCard label="Failed"    value={report.summary?.failed ?? 0} color={report.summary?.failed ? "text-red-600" : "text-slate-400"}/>
+            <SummaryCard label="Skipped"   value={report.summary?.skipped ?? 0} color="text-amber-600"/>
+          </div>
+          <PipelineStepsList steps={report.steps}/>
+          {report.artifacts && Object.keys(report.artifacts).length > 0 && (
+            <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-1.5">
+              <div className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Artifacts</div>
+              {Object.entries(report.artifacts).map(([k, v]) => (
+                <div key={k} className="flex items-start gap-2 text-xs">
+                  <span className="text-slate-400 w-40 shrink-0 font-medium">{k}</span>
+                  <span className="font-mono text-slate-700 break-all">{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {report.ui_urls && Object.keys(report.ui_urls).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(report.ui_urls).map(([k, v]) => (
+                <a key={k} href={v} target="_blank" rel="noreferrer" className="text-xs px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium">↗ {k.replace(/_/g, " ")}</a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OperateSection({ config }) {
+  const [tab, setTab] = useState("tasks");
+  const tabs = [
+    { id: "tasks",     label: "Mapping Tasks" },
+    { id: "schedules", label: "Schedules" },
+    { id: "taskflows", label: "Taskflows" },
+    { id: "runs",      label: "Job Runs" },
+    { id: "pipeline",  label: "Full Pipeline" },
+  ];
+  return (
+    <div>
+      <SectionTabs tabs={tabs} active={tab} onChange={setTab}/>
+      <div className={tab === "tasks"     ? "" : "hidden"}><OperateTasksScreen config={config}/></div>
+      <div className={tab === "schedules" ? "" : "hidden"}><OperateSchedulesScreen/></div>
+      <div className={tab === "taskflows" ? "" : "hidden"}><OperateTaskflowsScreen/></div>
+      <div className={tab === "runs"      ? "" : "hidden"}><OperateRunsScreen/></div>
+      <div className={tab === "pipeline"  ? "" : "hidden"}><OperateFullPipelineScreen/></div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 3 — Monitor section
+// ══════════════════════════════════════════════════════════════════════════════
+
+function TrendRow({ entry, tone }) {
+  const color = tone === "down" ? "text-red-600" : tone === "up" ? "text-emerald-600" : "text-slate-500";
+  const bar   = tone === "down" ? "bg-red-400"   : tone === "up" ? "bg-emerald-400"   : "bg-slate-300";
+  const width = Math.min(Math.abs(entry.delta || 0) * 2, 100);
+  return (
+    <div className="flex items-center gap-3 px-3 py-2">
+      <span className="text-xs font-mono text-slate-600 w-56 truncate shrink-0" title={entry.rule}>{entry.rule}</span>
+      <span className="text-xs text-slate-400 shrink-0">{Number(entry.first).toFixed(0)} → {Number(entry.last).toFixed(0)}</span>
+      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${bar}`} style={{ width: `${width}%` }}/></div>
+      <span className={`text-xs font-bold w-14 text-right shrink-0 ${color}`}>{entry.delta > 0 ? "+" : ""}{Number(entry.delta).toFixed(1)}</span>
+      <span className="text-xs text-slate-300 shrink-0">{entry.points} pts</span>
+    </div>
+  );
+}
+
+function MonitorSection() {
+  const [asset, setAsset]       = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [scores, setScores]     = useState(null);
+  const [trends, setTrends]     = useState(null);
+  const [rem, setRem]           = useState(null);
+  const [remLoading, setRemLoading] = useState(false);
+  const [alerts, setAlerts]     = useState(null);
+  const [showAlert, setShowAlert] = useState(false);
+  const [alertForm, setAlertForm] = useState({ threshold: "10", notify_email: "", lookback_days: "30" });
+  const [alertSaving, setAlertSaving] = useState(false);
+  const [alertError, setAlertError] = useState(null);
+
+  const loadAlerts = useCallback(() => { apiGet("/api/monitor/alerts").then(setAlerts).catch(() => {}); }, []);
+  useEffect(() => { loadAlerts(); }, []);
+
+  const load = async () => {
+    setLoading(true); setError(null); setScores(null); setTrends(null); setRem(null);
+    try {
+      const [s, t] = await Promise.all([
+        apiPost("/api/monitor/scores", { asset_name: asset }),
+        apiPost("/api/monitor/trends", { asset_name: asset }).catch(() => null),
+      ]);
+      setScores(s); setTrends(t);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const loadRemediation = async () => {
+    setRemLoading(true);
+    try { setRem(await apiPost("/api/monitor/remediation", { asset_name: asset })); }
+    catch (e) { setError(e.message); }
+    finally { setRemLoading(false); }
+  };
+
+  const saveAlert = async () => {
+    setAlertSaving(true); setAlertError(null);
+    try {
+      await apiPost("/api/monitor/alerts/create", {
+        asset_name: asset,
+        threshold: parseFloat(alertForm.threshold),
+        notify_email: alertForm.notify_email,
+        lookback_days: parseInt(alertForm.lookback_days, 10),
+      });
+      setShowAlert(false); loadAlerts();
+    } catch (e) { setAlertError(e.message); }
+    finally { setAlertSaving(false); }
+  };
+
+  const composite = scores?.composite;
+  return (
+    <div className="space-y-5">
+      {/* Asset picker */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm flex items-end gap-3">
+        <div className="flex-1">
+          <Field label="Asset"><input className={INPUT_CLS + " font-mono"} placeholder="e.g. CUSTOMER_MASTER" value={asset} onChange={e => setAsset(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && asset) load(); }}/></Field>
+        </div>
+        <PrimaryButton onClick={load} running={loading} disabled={!asset}>Load scorecard</PrimaryButton>
+        <button onClick={() => setShowAlert(true)} disabled={!asset}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-all ${asset ? "bg-white border-amber-300 text-amber-600 hover:bg-amber-50" : "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"}`}>
+          🔔 Alert rule
+        </button>
+      </div>
+      <ErrorBox error={error}/>
+
+      {scores && (
+        <div className="grid grid-cols-3 gap-5">
+          <div className="col-span-2 space-y-4">
+            {/* Scorecard */}
+            <div className="grid grid-cols-3 gap-3">
+              <SummaryCard label="Composite score" value={composite != null ? composite.toFixed(1) + "%" : "—"} color={composite == null ? "text-slate-400" : composite >= 90 ? "text-emerald-600" : composite >= 70 ? "text-amber-600" : "text-red-600"}/>
+              <SummaryCard label="Rules scored" value={scores.score_count ?? 0}/>
+              <SummaryCard label="Dimensions" value={(scores.dimensions || []).length}/>
+            </div>
+            {scores.score_count === 0 ? (
+              <EmptyState icon="⏱" title="No scores on this asset yet — possibly awaiting catalog rollup"
+                body="CDGC rolls uploaded DQ scores into the asset scorecard asynchronously — a score uploaded minutes ago may not appear yet. If rules were just published, re-check in a few minutes. Otherwise verify rule occurrences are registered against this asset."/>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "rule", label: "Rule", render: r => <span className="font-mono">{r.rule}</span> },
+                  { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
+                  { key: "value", label: "Score", render: r => <span className={`font-bold ${Number(r.value) >= 90 ? "text-emerald-600" : Number(r.value) >= 70 ? "text-amber-600" : "text-red-600"}`}>{r.value != null && r.value !== "" ? `${r.value}%` : "—"}</span> },
+                  { key: "exception", label: "Exceptions", render: r => <span className={r.exception > 0 ? "text-red-500 font-semibold" : "text-slate-400"}>{r.exception ?? 0}{r.total ? ` / ${r.total}` : ""}</span> },
+                  { key: "lastRun", label: "Last run" },
+                ]}
+                rows={scores.scores || []}
+              />
+            )}
+
+            {/* Trend */}
+            {trends && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend — last {trends.lookback_days} days (threshold ±{trends.threshold})</span>
+                  <div className="flex gap-3 text-xs">
+                    <span className="text-red-600 font-semibold">{(trends.degrading || []).length} degrading</span>
+                    <span className="text-emerald-600 font-semibold">{(trends.improving || []).length} improving</span>
+                    <span className="text-slate-500">{(trends.stable || []).length} stable</span>
+                  </div>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {(trends.degrading || []).map((e, i) => <TrendRow key={"d" + i} entry={e} tone="down"/>)}
+                  {(trends.improving || []).map((e, i) => <TrendRow key={"i" + i} entry={e} tone="up"/>)}
+                  {(trends.stable || []).map((e, i) => <TrendRow key={"s" + i} entry={e} tone="flat"/>)}
+                  {(trends.no_history || []).length > 0 && (
+                    <div className="px-4 py-2 text-xs text-slate-400 italic">
+                      {(trends.no_history || []).length} rule(s) have fewer than 2 trend points — trend needs at least two scans.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Remediation side panel */}
+          <div className="space-y-3">
+            <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Remediation</span>
+                <button onClick={loadRemediation} className="text-xs text-brand font-medium hover:underline">{remLoading ? "Analyzing…" : rem ? "↻ Refresh" : "Analyze"}</button>
+              </div>
+              {!rem ? (
+                <div className="p-4 text-xs text-slate-400 italic">Run analysis to surface failing rules with suggested remediation focus areas.</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  <div className="px-4 py-2 text-xs text-slate-500">
+                    {rem.summary?.failing_rule_count ?? 0} of {rem.summary?.rule_count ?? 0} rules failing · {rem.summary?.total_exceptions ?? 0} exceptions
+                  </div>
+                  {(rem.suggestion_seeds || []).map((s, i) => (
+                    <div key={i} className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-semibold text-slate-700 truncate">{s.rule}</span>
+                        <DimChip dim={s.dimension}/>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">→ {s.suggested_focus}</div>
+                    </div>
+                  ))}
+                  {(rem.suggestion_seeds || []).length === 0 && <div className="p-4 text-xs text-emerald-600">All rules healthy — nothing to remediate. ✓</div>}
+                </div>
+              )}
+            </div>
+
+            {/* Alert rules list */}
+            <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Alert rules</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {(alerts?.alerts || []).map(a => (
+                  <div key={a.id} className="px-4 py-2.5">
+                    <div className="text-xs font-semibold text-slate-700">{a.asset_name}</div>
+                    <div className="text-xs text-slate-500">drop ≥ {a.threshold} pts / {a.lookback_days}d → {a.notify_email}</div>
+                  </div>
+                ))}
+                {(!alerts || (alerts.alerts || []).length === 0) && <div className="p-4 text-xs text-slate-400 italic">No alert rules configured.</div>}
+              </div>
+              {/* Be precise about where the alert lives — this is our platform, not CDGC */}
+              <div className="px-4 py-2 bg-amber-50 border-t border-amber-100 text-xs text-amber-700">
+                Thresholds are stored by <strong>this platform</strong> and evaluated by our scheduler — CDGC exposes no alert-registration API.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!scores && !loading && (
+        <div className="text-sm text-slate-400 italic px-2">Enter an asset name to load its DQ scorecard, trend and remediation guidance.</div>
+      )}
+
+      {/* Alert modal */}
+      {showAlert && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50" onClick={() => setShowAlert(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 space-y-4" onClick={e => e.stopPropagation()}>
+            <div>
+              <div className="text-sm font-bold text-slate-800">Alert on score degradation</div>
+              <div className="text-xs text-slate-500 mt-0.5">Asset: <span className="font-mono">{asset}</span></div>
+            </div>
+            <Field label="Alert when score drops by at least (points)">
+              <input type="number" className={INPUT_CLS} value={alertForm.threshold} onChange={e => setAlertForm(f => ({ ...f, threshold: e.target.value }))}/>
+            </Field>
+            <Field label="Notify email">
+              <input type="email" className={INPUT_CLS} placeholder="steward@company.com" value={alertForm.notify_email} onChange={e => setAlertForm(f => ({ ...f, notify_email: e.target.value }))}/>
+            </Field>
+            <Field label="Lookback window (days)">
+              <input type="number" className={INPUT_CLS} value={alertForm.lookback_days} onChange={e => setAlertForm(f => ({ ...f, lookback_days: e.target.value }))}/>
+            </Field>
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+              Stored locally by this platform (.dq_monitor_alerts.json) and evaluated by our scheduler — not registered in CDGC.
+            </div>
+            <ErrorBox error={alertError}/>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowAlert(false)} className="px-4 py-2 rounded-lg text-sm text-slate-500 border border-slate-300 bg-white hover:bg-slate-50">Cancel</button>
+              <PrimaryButton onClick={saveAlert} running={alertSaving} disabled={!alertForm.notify_email} tone="emerald">Save alert</PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 4 — Explore section
+// ══════════════════════════════════════════════════════════════════════════════
+
+function NodeChip({ name, type, location }) {
+  return (
+    <span className="inline-flex flex-col bg-white border border-slate-200 rounded-lg px-2.5 py-1 max-w-[240px]" title={location || name}>
+      <span className="text-xs font-mono font-semibold text-slate-700 truncate">{name || "?"}</span>
+      <span className="text-xs text-slate-400 truncate">{(type || "").split(".").pop()}</span>
+    </span>
+  );
+}
+
+// The claimed differentiator is programmatic access + severity classification —
+// a node-and-edge rendering is sufficient, not the IDMC lineage visualiser.
+function EdgeList({ edges }) {
+  const byDistance = {};
+  (edges || []).forEach(e => {
+    const d = e.distance ?? 1;
+    (byDistance[d] = byDistance[d] || []).push(e);
+  });
+  const distances = Object.keys(byDistance).map(Number).sort((a, b) => a - b);
+  return (
+    <div className="space-y-3">
+      {distances.map(d => (
+        <div key={d} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Hop {d}</div>
+          <div className="divide-y divide-slate-50">
+            {byDistance[d].map((e, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2 flex-wrap">
+                <NodeChip name={e.from} type={e.fromType} location={e.fromLocation}/>
+                <span className="text-slate-400 text-sm shrink-0">→</span>
+                <NodeChip name={e.to} type={e.toType} location={e.toLocation}/>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Lineage that returns nothing is a legitimate state, not a broken feature.
+function LineageEmptyState({ assetName }) {
+  return (
+    <EmptyState icon="⬡" title={`No dataflow has been cataloged for ${assetName || "this asset"} yet`}
+      body="Lineage populates once CDI mappings / ETL jobs referencing this asset are scanned into CDGC. Sample tables loaded directly (e.g. TPC-DS seeds) have no upstream pipeline, so an empty graph is expected. Pick an asset fed by a cataloged mapping to see edges."/>
+  );
+}
+
+function AssetNotFound({ error, assetName }) {
+  const notFound = /no asset|not found|no results/i.test(String(error || ""));
+  if (!notFound) return <ErrorBox error={error}/>;
+  return (
+    <EmptyState icon="🔍" title={`"${assetName}" not found in the catalog`}
+      body="Name-to-identity resolution returned nothing — the asset may not be cataloged yet, or the name differs from the catalog entry. Try the exact table name as shown in Discover."/>
+  );
+}
+
+function ExploreLineageScreen() {
+  const [form, setForm] = useState({ asset_name: "", direction: "all", depth: 3 });
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [data, setData]       = useState(null);
+
+  const run = async () => {
+    setRunning(true); setError(null); setData(null);
+    try { setData(await apiPost("/api/explore/lineage", form)); }
+    catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="grid grid-cols-4 gap-3 items-end">
+          <div className="col-span-2">
+            <Field label="Asset"><input className={INPUT_CLS + " font-mono"} placeholder="table / view / dataset name" value={form.asset_name} onChange={e => setForm(f => ({ ...f, asset_name: e.target.value }))}/></Field>
+          </div>
+          <Field label="Direction">
+            <select className={INPUT_CLS} value={form.direction} onChange={e => setForm(f => ({ ...f, direction: e.target.value }))}>
+              <option value="upstream">Upstream</option>
+              <option value="downstream">Downstream</option>
+              <option value="all">Both</option>
+            </select>
+          </Field>
+          <Field label="Depth (max 5 — each hop is another API call)">
+            <select className={INPUT_CLS} value={form.depth} onChange={e => setForm(f => ({ ...f, depth: parseInt(e.target.value, 10) }))}>
+              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </Field>
+        </div>
+        <PrimaryButton onClick={run} running={running} disabled={!form.asset_name}>⬡ Trace lineage</PrimaryButton>
+      </div>
+      {error && <AssetNotFound error={error} assetName={form.asset_name}/>}
+      {data && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryCard label="Asset" value={data.asset?.name || "—"} color="text-slate-700"/>
+            <SummaryCard label="Edges" value={data.edge_count ?? 0}/>
+            <SummaryCard label="Connected assets" value={data.distinct_nodes ?? 0}/>
+          </div>
+          {(data.edge_count ?? 0) === 0
+            ? <LineageEmptyState assetName={data.asset?.name}/>
+            : <EdgeList edges={data.edges}/>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExploreImpactScreen() {
+  const [form, setForm] = useState({ asset_name: "", change_description: "", depth: 3 });
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [data, setData]       = useState(null);
+
+  const run = async () => {
+    setRunning(true); setError(null); setData(null);
+    try { setData(await apiPost("/api/explore/impact", form)); }
+    catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Asset"><input className={INPUT_CLS + " font-mono"} value={form.asset_name} onChange={e => setForm(f => ({ ...f, asset_name: e.target.value }))}/></Field>
+          <Field label="Proposed change"><input className={INPUT_CLS} placeholder="e.g. drop column CUSTOMER_TIER" value={form.change_description} onChange={e => setForm(f => ({ ...f, change_description: e.target.value }))}/></Field>
+        </div>
+        <PrimaryButton onClick={run} running={running} disabled={!form.asset_name}>◎ Generate impact report</PrimaryButton>
+      </div>
+      {error && <AssetNotFound error={error} assetName={form.asset_name}/>}
+      {data && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4">
+            <SevBadge severity={data.severity}/>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-slate-800">{data.distinct_downstream_assets ?? 0} downstream assets affected ({data.edge_count ?? 0} edges)</div>
+              <div className="text-xs text-slate-500 mt-0.5">{data.change_description}</div>
+            </div>
+          </div>
+          {Object.keys(data.affected_by_type || {}).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(data.affected_by_type).map(([t, n]) => (
+                <span key={t} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-1 rounded-lg">{t.split(".").pop()} × {n}</span>
+              ))}
+            </div>
+          )}
+          {(data.distinct_downstream_assets ?? 0) === 0
+            ? <LineageEmptyState assetName={data.asset?.name}/>
+            : (
+              <DataTable
+                columns={[
+                  { key: "name", label: "Affected asset", render: r => <span className="font-mono font-semibold">{r.name || "?"}</span> },
+                  { key: "classType", label: "Type", render: r => <span className="text-slate-500">{(r.classType || "").split(".").pop()}</span> },
+                  { key: "min_distance", label: "Hops away" },
+                  { key: "location", label: "Location", render: r => <span className="text-slate-400 text-xs break-all">{r.location || "—"}</span> },
+                ]}
+                rows={data.top_affected || []}
+              />
+            )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExploreSourceScreen() {
+  const [form, setForm] = useState({ asset_name: "", depth: 5 });
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [data, setData]       = useState(null);
+
+  const run = async () => {
+    setRunning(true); setError(null); setData(null);
+    try { setData(await apiPost("/api/explore/source", form)); }
+    catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm flex items-end gap-3">
+        <div className="flex-1">
+          <Field label="Asset — walk upstream to its root data sources"><input className={INPUT_CLS + " font-mono"} value={form.asset_name} onChange={e => setForm(f => ({ ...f, asset_name: e.target.value }))}/></Field>
+        </div>
+        <PrimaryButton onClick={run} running={running} disabled={!form.asset_name}>⬢ Find sources</PrimaryButton>
+      </div>
+      {error && <AssetNotFound error={error} assetName={form.asset_name}/>}
+      {data && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryCard label="Root sources" value={data.root_count ?? 0}/>
+            <SummaryCard label="Source systems" value={(data.source_systems || []).length}/>
+            <SummaryCard label="Edges walked" value={data.edge_count ?? 0} color="text-slate-500"/>
+          </div>
+          {(data.source_systems || []).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {data.source_systems.map(s => <span key={s} className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-lg font-semibold">⬢ {s}</span>)}
+            </div>
+          )}
+          {(data.root_count ?? 0) === 0
+            ? <LineageEmptyState assetName={data.asset?.name}/>
+            : (
+              <DataTable
+                columns={[
+                  { key: "name", label: "Root asset", render: r => <span className="font-mono font-semibold">{r.name || "?"}</span> },
+                  { key: "source_system", label: "Source system", render: r => r.source_system ? <span className="text-emerald-600 font-medium">{r.source_system}</span> : <span className="text-slate-400">unknown</span> },
+                  { key: "classType", label: "Type", render: r => <span className="text-slate-500">{(r.classType || "").split(".").pop()}</span> },
+                  { key: "max_distance", label: "Hops upstream" },
+                ]}
+                rows={data.root_sources || []}
+              />
+            )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExploreSection() {
+  const [tab, setTab] = useState("lineage");
+  const tabs = [
+    { id: "lineage", label: "Lineage" },
+    { id: "impact",  label: "Impact Report" },
+    { id: "source",  label: "Source Finder" },
+  ];
+  return (
+    <div>
+      <SectionTabs tabs={tabs} active={tab} onChange={setTab}/>
+      <div className={tab === "lineage" ? "" : "hidden"}><ExploreLineageScreen/></div>
+      <div className={tab === "impact"  ? "" : "hidden"}><ExploreImpactScreen/></div>
+      <div className={tab === "source"  ? "" : "hidden"}><ExploreSourceScreen/></div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 5 — Glossary section
+// ══════════════════════════════════════════════════════════════════════════════
+
+function GlossaryHealthScreen() {
+  const [scope, setScope]     = useState("all");
+  const [running, setRunning] = useState(false);
+  const [error, setError]     = useState(null);
+  const [data, setData]       = useState(null);
+
+  const run = async () => {
+    setRunning(true); setError(null);
+    try { setData(await apiPost("/api/glossary/health", { scan_scope: scope })); }
+    catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm flex items-end gap-3">
+        <Field label="Scan scope">
+          <select className={INPUT_CLS} value={scope} onChange={e => setScope(e.target.value)}>
+            <option value="all">Everything</option>
+            <option value="duplicates">Duplicates only</option>
+            <option value="orphans">Orphans only</option>
+            <option value="gaps">Definition gaps only</option>
+          </select>
+        </Field>
+        <PrimaryButton onClick={run} running={running}>◫ Run health scan</PrimaryButton>
+      </div>
+      <ErrorBox error={error}/>
+      {data && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-4 gap-3">
+            <SummaryCard label="Terms scanned" value={data.term_count ?? 0}/>
+            <SummaryCard label="Duplicates" value={(data.duplicates || []).length} color={(data.duplicates || []).length ? "text-red-600" : "text-emerald-600"}/>
+            <SummaryCard label="Orphans" value={(data.orphans || []).length} color={(data.orphans || []).length ? "text-amber-600" : "text-emerald-600"}/>
+            <SummaryCard label="Definition gaps" value={(data.gaps || []).length} color={(data.gaps || []).length ? "text-amber-600" : "text-emerald-600"}/>
+          </div>
+          {(data.duplicates || []).length > 0 && (
+            <div className="border border-red-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs font-semibold text-red-600 uppercase tracking-wider">Duplicate names — merge candidates</div>
+              <div className="divide-y divide-slate-50">
+                {data.duplicates.map((d, i) => (
+                  <div key={i} className="px-4 py-2 flex items-center gap-3">
+                    <span className="text-sm font-medium text-slate-700">{d.name}</span>
+                    <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">× {d.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {(data.orphans || []).length > 0 && (
+            <div className="border border-amber-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 text-xs font-semibold text-amber-600 uppercase tracking-wider">Orphaned terms — no relationships (first 50 terms checked)</div>
+              <div className="p-3 flex flex-wrap gap-1.5">
+                {data.orphans.map((o, i) => <span key={i} className="text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2 py-0.5 rounded font-medium">{o.name}</span>)}
+              </div>
+            </div>
+          )}
+          {(data.gaps || []).length > 0 && (
+            <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Definition gaps</div>
+              <div className="divide-y divide-slate-50">
+                {data.gaps.map((g, i) => (
+                  <div key={i} className="px-4 py-2 flex items-center gap-3">
+                    <span className="text-sm font-medium text-slate-700 flex-1 truncate">{g.name}</span>
+                    <span className="text-xs text-slate-400">{g.reason} ({g.definition_length} chars)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {!(data.duplicates || []).length && !(data.orphans || []).length && !(data.gaps || []).length && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm font-semibold text-emerald-800">✓ Glossary is healthy — no duplicates, orphans or definition gaps in the scanned sample.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GlossaryTermsScreen() {
+  // Suggest-from-asset flow
+  const [suggestForm, setSuggestForm] = useState({ asset_name: "", domain_context: "" });
+  const [suggesting, setSuggesting]   = useState(false);
+  const [suggestions, setSuggestions] = useState(null);
+  const [selTerms, setSelTerms]       = useState(new Set());
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkDone, setBulkDone]       = useState(null);
+  // Standalone create — how a steward creates a term outside the pipeline
+  const [form, setForm] = useState({ term_name: "", definition: "", category: "", synonyms: "" });
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated]   = useState(null);
+  const [error, setError]       = useState(null);
+
+  const suggest = async () => {
+    setSuggesting(true); setError(null); setSuggestions(null); setBulkDone(null);
+    try {
+      const body = { asset_name: suggestForm.asset_name };
+      if (suggestForm.domain_context) body.domain_context = suggestForm.domain_context;
+      const out = await apiPost("/api/glossary/suggest", body);
+      setSuggestions(out);
+      setSelTerms(new Set((out.suggestions || []).map(s => s.suggested_term)));
+    } catch (e) { setError(e.message); }
+    finally { setSuggesting(false); }
+  };
+
+  const createSelected = async () => {
+    setBulkCreating(true); setError(null);
+    const done = [];
+    for (const s of (suggestions?.suggestions || []).filter(x => selTerms.has(x.suggested_term))) {
+      try {
+        const r = await apiPost("/api/glossary/term/create", {
+          term_name: s.suggested_term, definition: s.definition || `Business term derived from ${s.source_column}.`,
+          synonyms: s.synonyms || [],
+        });
+        done.push({ name: s.suggested_term, ok: true, id: r.id });
+      } catch (e) { done.push({ name: s.suggested_term, ok: false, error: e.message }); }
+    }
+    setBulkDone(done);
+    setBulkCreating(false);
+  };
+
+  const createStandalone = async () => {
+    setCreating(true); setError(null); setCreated(null);
+    try {
+      const body = { term_name: form.term_name, definition: form.definition };
+      if (form.category) body.category = form.category;
+      if (form.synonyms) body.synonyms = form.synonyms.split(",").map(s => s.trim()).filter(Boolean);
+      setCreated(await apiPost("/api/glossary/term/create", body));
+    } catch (e) { setError(e.message); }
+    finally { setCreating(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <ErrorBox error={error}/>
+      {/* Standalone create */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Create a term — standalone</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Term name"><input className={INPUT_CLS} placeholder="e.g. Customer Lifetime Value" value={form.term_name} onChange={e => setForm(f => ({ ...f, term_name: e.target.value }))}/></Field>
+          <Field label="Parent category (optional)"><input className={INPUT_CLS} placeholder="external id, or id:<internal>" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}/></Field>
+        </div>
+        <Field label="Definition"><textarea className={INPUT_CLS} rows="2" placeholder="Business-facing description" value={form.definition} onChange={e => setForm(f => ({ ...f, definition: e.target.value }))}/></Field>
+        <Field label="Synonyms (comma-separated, optional)"><input className={INPUT_CLS} placeholder="CLV, LTV" value={form.synonyms} onChange={e => setForm(f => ({ ...f, synonyms: e.target.value }))}/></Field>
+        <PrimaryButton onClick={createStandalone} running={creating} disabled={!form.term_name || !form.definition} tone="emerald">＋ Create business term</PrimaryButton>
+        {created && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+            ✓ <strong>{created.name}</strong> created in CDGC — id <span className="font-mono">{created.id || "?"}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Suggest from asset */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Suggest terms from an asset's columns</div>
+        <div className="grid grid-cols-3 gap-3 items-end">
+          <div className="col-span-2">
+            <Field label="Asset"><input className={INPUT_CLS + " font-mono"} value={suggestForm.asset_name} onChange={e => setSuggestForm(f => ({ ...f, asset_name: e.target.value }))}/></Field>
+          </div>
+          <Field label="Domain hint (optional)"><input className={INPUT_CLS} placeholder="Finance, Customer…" value={suggestForm.domain_context} onChange={e => setSuggestForm(f => ({ ...f, domain_context: e.target.value }))}/></Field>
+        </div>
+        <PrimaryButton onClick={suggest} running={suggesting} disabled={!suggestForm.asset_name}>❋ Suggest terms</PrimaryButton>
+        {suggestions && (suggestions.suggestions || []).length === 0 && (
+          <EmptyState title={suggestions.note || "No columns found to derive terms from"}
+            body="The asset either wasn't found in the catalog or exposes no column metadata. Scan it first (Govern → Scan Table), then retry."/>
+        )}
+        {suggestions && (suggestions.suggestions || []).length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{selTerms.size} / {suggestions.suggestions.length} selected</span>
+              <PrimaryButton onClick={createSelected} running={bulkCreating} disabled={selTerms.size === 0} tone="emerald">✓ Create {selTerms.size} terms</PrimaryButton>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto scrollbar-thin">
+              {suggestions.suggestions.map((s, i) => {
+                const isSel = selTerms.has(s.suggested_term);
+                const result = (bulkDone || []).find(d => d.name === s.suggested_term);
+                return (
+                  <div key={i} className={`flex items-start gap-3 px-4 py-2.5 ${isSel ? "bg-white" : "bg-slate-50 opacity-60"}`}>
+                    <input type="checkbox" checked={isSel} className="accent-violet-600 cursor-pointer w-3.5 h-3.5 shrink-0 mt-0.5"
+                      onChange={() => setSelTerms(prev => { const n = new Set(prev); n.has(s.suggested_term) ? n.delete(s.suggested_term) : n.add(s.suggested_term); return n; })}/>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-slate-800">{s.suggested_term}</span>
+                        <span className="text-xs text-slate-400 font-mono">← {s.source_column}</span>
+                        {s.confidence != null && <span className="text-xs text-slate-400">{fmtPct(s.confidence)} confidence</span>}
+                        {result && (result.ok
+                          ? <span className="text-xs text-emerald-600 font-semibold">✓ created</span>
+                          : <span className="text-xs text-red-500 font-semibold" title={result.error}>✗ failed</span>)}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">{s.definition}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GlossarySection() {
+  const [tab, setTab] = useState("health");
+  const tabs = [
+    { id: "health", label: "Health Scan" },
+    { id: "terms",  label: "Term Management" },
+  ];
+  return (
+    <div>
+      <SectionTabs tabs={tabs} active={tab} onChange={setTab}/>
+      <div className={tab === "health" ? "" : "hidden"}><GlossaryHealthScreen/></div>
+      <div className={tab === "terms"  ? "" : "hidden"}><GlossaryTermsScreen/></div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 6 — Admin section
+// ══════════════════════════════════════════════════════════════════════════════
+
+function AdminConnectionsScreen() {
+  const [data, setData]     = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try { setData(await apiPost("/api/admin/connections", { top: 100 })); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Org connections {data ? `(${data.count} of ${data.total})` : ""}</div>
+        <button onClick={load} className="text-xs text-slate-400 hover:text-brand font-medium">{loading ? "Loading…" : "↻ Refresh"}</button>
+      </div>
+      <ErrorBox error={error}/>
+      <DataTable
+        columns={[
+          { key: "name", label: "Name", render: r => <span className="font-medium">{r.name}</span> },
+          { key: "type", label: "Type", render: r => <DimChip dim={r.type}/> },
+          { key: "id", label: "Connection ID", render: r => <span className="font-mono text-slate-500">{r.id}</span> },
+          { key: "updateTime", label: "Updated" },
+        ]}
+        rows={data?.connections || []}
+        empty={loading ? <div className="p-4"><Spinner/></div> : undefined}
+      />
+    </div>
+  );
+}
+
+function AdminRuleLibraryScreen() {
+  const [orgRules, setOrgRules]   = useState(null);
+  const [templates, setTemplates] = useState(null);
+  const [error, setError]         = useState(null);
+  // Author a custom rule from plain English + a validated template
+  const [form, setForm] = useState({ rule_name: "", description: "", dimension: "COMPLETENESS", rule_template: "" });
+  const [validating, setValidating] = useState(false);
+  const [validation, setValidation] = useState(null);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(null);
+  const [saveError, setSaveError] = useState(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [org, tpl] = await Promise.all([
+        apiPost("/api/admin/rules/list", { top: 100 }).catch(e => ({ rules: [], _err: e.message })),
+        apiGet("/api/admin/rule_templates"),
+      ]);
+      setOrgRules(org); setTemplates(tpl);
+      if (org._err) setError(org._err);
+    } catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, []);
+
+  const validate = async () => {
+    setValidating(true); setValidation(null); setSaveError(null);
+    try {
+      const body = { dimension: form.dimension };
+      if (form.rule_template) body.rule_template = `examples/${form.rule_template}`;
+      setValidation(await apiPost("/api/admin/rules/validate", body));
+    } catch (e) { setValidation({ valid: false, error: e.message }); }
+    finally { setValidating(false); }
+  };
+
+  // Multi-step create with rollback on the server — surface as ONE action.
+  const save = async () => {
+    setSaving(true); setSaveError(null); setSaved(null);
+    try {
+      const body = { rule_name: form.rule_name, description: form.description, dimension: form.dimension };
+      if (form.rule_template) body.rule_template = `examples/${form.rule_template}`;
+      setSaved(await apiPost("/api/admin/rules/create", body));
+      load();
+    } catch (e) { setSaveError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <ErrorBox error={error}/>
+
+      {/* Author panel */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Author a rule specification</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Rule name"><input className={INPUT_CLS} placeholder="e.g. DQ_EMAIL_FORMAT" value={form.rule_name} onChange={e => setForm(f => ({ ...f, rule_name: e.target.value }))}/></Field>
+          <Field label="Dimension">
+            <select className={INPUT_CLS} value={form.dimension} onChange={e => setForm(f => ({ ...f, dimension: e.target.value }))}>
+              {DQ_DIMENSIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Describe the rule in plain English" hint="Stored as the rule's business description in CDQ.">
+          <textarea className={INPUT_CLS} rows="2" placeholder="e.g. Customer email must be present and match a valid email pattern" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}/>
+        </Field>
+        <Field label="Rule logic template" hint="The template supplies the executable logic; its DIMENSION overrides the selection above.">
+          <select className={INPUT_CLS} value={form.rule_template} onChange={e => { setForm(f => ({ ...f, rule_template: e.target.value })); setValidation(null); }}>
+            <option value="">Built-in null check (COMPLETENESS)</option>
+            {(templates?.templates || []).map(t => <option key={t.file} value={t.file}>{t.template} — {t.dimension}</option>)}
+          </select>
+        </Field>
+        <div className="flex items-center gap-3">
+          {/* validate_rule runs as a pre-flight check before save */}
+          <button onClick={validate} disabled={validating}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-50 transition-all">
+            {validating ? <><Spinner/> Validating…</> : "✓ Validate"}
+          </button>
+          <PrimaryButton onClick={save} running={saving} disabled={!form.rule_name} tone="emerald">💾 Save to CDQ</PrimaryButton>
+          {validation && (validation.valid
+            ? <span className="text-xs text-emerald-600 font-semibold">✓ Rule logic is valid — safe to deploy</span>
+            : <span className="text-xs text-red-500 font-semibold" title={validation.error || JSON.stringify(validation.raw?.error)}>✗ Validation failed{validation.raw?.error ? `: ${String(validation.raw.error).slice(0, 120)}` : ""}</span>)}
+        </div>
+        <ErrorBox error={saveError}/>
+        {saved && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
+            <div>✓ Rule <strong>{saved.name}</strong> created — state <span className="font-mono">{saved.documentState}</span></div>
+            {saved.ui_url && <a href={saved.ui_url} target="_blank" rel="noreferrer" className="text-brand underline">Open in CDQ ↗</a>}
+          </div>
+        )}
+      </div>
+
+      {/* Template library — local JSON, rendered alongside org rules, labelled */}
+      <div>
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Template library ({templates?.count ?? 0} local templates)</div>
+        <div className="grid grid-cols-2 gap-3">
+          {(templates?.templates || []).map(t => (
+            <div key={t.file} className="bg-white border border-slate-200 rounded-xl p-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-mono font-semibold text-slate-800">{t.template}</span>
+                <DimChip dim={t.dimension}/>
+                <span className="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">local template</span>
+              </div>
+              <div className="text-xs text-slate-400 mt-1">fields: {(t.fields || []).join(", ") || "—"}{Object.keys(t.options || {}).length ? ` · knobs: ${Object.entries(t.options).map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}</div>
+              {t.description && <div className="text-xs text-slate-500 mt-1 italic truncate" title={t.description}>{t.description}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Org rules */}
+      <div>
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Rule specifications in this org ({orgRules?.count ?? "…"})</div>
+        <DataTable
+          columns={[
+            { key: "name", label: "Rule", render: r => <span className="font-mono font-medium">{r.name}</span> },
+            { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
+            { key: "description", label: "Description", render: r => <span className="text-slate-500">{(r.description || "—").slice(0, 60)}</span> },
+            { key: "createdBy", label: "Created by" },
+            { key: "lastUpdatedTime", label: "Updated" },
+          ]}
+          rows={orgRules?.rules || []}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AdminExportImportScreen() {
+  const [ids, setIds]         = useState("");
+  const [name, setName]       = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportOut, setExportOut] = useState(null);
+  const [error, setError]     = useState(null);
+  const [importFile, setImportFile] = useState(null);
+  const [importing, setImporting]   = useState(false);
+  const [importOut, setImportOut]   = useState(null);
+  const [importError, setImportError] = useState(null);
+
+  const doExport = async () => {
+    setExporting(true); setError(null); setExportOut(null);
+    try {
+      const object_ids = ids.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      const body = { object_ids };
+      if (name) body.name = name;
+      setExportOut(await apiPost("/api/admin/export", body));
+    } catch (e) { setError(e.message); }
+    finally { setExporting(false); }
+  };
+
+  const doImport = async () => {
+    if (!importFile) return;
+    setImporting(true); setImportError(null); setImportOut(null);
+    try {
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+        fr.onerror = reject;
+        fr.readAsDataURL(importFile);
+      });
+      setImportOut(await apiPost("/api/admin/import", { filename: importFile.name, content_base64: b64 }));
+    } catch (e) { setImportError(e.message); }
+    finally { setImporting(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Export assets</div>
+        <Field label="Object IDs (comma or newline separated)" hint="v3 asset ids — mappings, tasks, taskflows, connections.">
+          <textarea className={INPUT_CLS + " font-mono"} rows="3" value={ids} onChange={e => setIds(e.target.value)}/>
+        </Field>
+        <Field label="Package name (optional)"><input className={INPUT_CLS} placeholder="export" value={name} onChange={e => setName(e.target.value)}/></Field>
+        <PrimaryButton onClick={doExport} running={exporting} disabled={!ids.trim()}>⇩ Export {exporting ? "(polling the export job…)" : ""}</PrimaryButton>
+        <ErrorBox error={error}/>
+        {exportOut && (
+          <div className={`rounded-lg p-3 text-xs space-y-1.5 border ${exportOut.package_path ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+            <div>Job <span className="font-mono">{exportOut.job_id}</span> — state <strong>{exportOut.state}</strong>{exportOut.package_bytes ? ` · ${(exportOut.package_bytes / 1024).toFixed(1)} KB` : ""}</div>
+            {exportOut.message && <div>{exportOut.message}</div>}
+            {exportOut.download_url && (
+              <a href={exportOut.download_url} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 transition-colors">⬇ Download package</a>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Import package</div>
+        <Field label="Asset ZIP (from a previous export)" hint="Conflicts resolve as REUSE — existing assets are kept, not overwritten.">
+          <input type="file" accept=".zip" className="text-sm text-slate-600" onChange={e => setImportFile(e.target.files?.[0] || null)}/>
+        </Field>
+        <PrimaryButton onClick={doImport} running={importing} disabled={!importFile}>⇧ Import {importing ? "(upload + commit + poll…)" : ""}</PrimaryButton>
+        <ErrorBox error={importError}/>
+        {importOut && (
+          <div className={`rounded-lg p-3 text-xs border ${(importOut.state || "").includes("SUCCESS") ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+            Job <span className="font-mono">{importOut.upload_job_id}</span> — state <strong>{importOut.state}</strong>{importOut.message ? ` · ${importOut.message}` : ""}{importOut.checksum_valid === false ? " · checksum mismatch (relaxed)" : ""}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminCatalogSourcesScreen() {
+  const [names, setNames]   = useState("");
+  const [schemaHint, setSchemaHint] = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError]   = useState(null);
+  const [data, setData]     = useState(null);
+
+  const run = async () => {
+    setRunning(true); setError(null); setData(null);
+    try {
+      const table_names = names.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      const body = { table_names };
+      if (schemaHint) body.schema_hint = schemaHint;
+      setData(await apiPost("/api/admin/scan_source", body));
+    } catch (e) { setError(e.message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Scan catalog source metadata</div>
+        <Field label="Table names (comma or newline separated)"><textarea className={INPUT_CLS + " font-mono"} rows="2" value={names} onChange={e => setNames(e.target.value)}/></Field>
+        <Field label="Schema hint (optional)"><input className={INPUT_CLS + " font-mono"} value={schemaHint} onChange={e => setSchemaHint(e.target.value)}/></Field>
+        <PrimaryButton onClick={run} running={running} disabled={!names.trim()}>◈ Scan source</PrimaryButton>
+        <ErrorBox error={error}/>
+      </div>
+      {data && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <SummaryCard label="Discovered" value={data.discovered_count ?? 0} color="text-emerald-600"/>
+            <SummaryCard label="Missing" value={(data.missing || []).length} color={(data.missing || []).length ? "text-red-500" : "text-slate-400"}/>
+          </div>
+          {(data.missing || []).length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="text-xs text-red-500 font-medium mb-2 uppercase tracking-wider">Not found in catalog</div>
+              <div className="flex flex-wrap gap-1.5">{data.missing.map(m => <span key={m} className="text-xs bg-white border border-red-200 text-red-600 px-2 py-0.5 rounded font-mono">{m}</span>)}</div>
+            </div>
+          )}
+          {(data.tables || []).map(t => (
+            <div key={t.name} className="bg-white border border-slate-200 rounded-xl p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-mono font-bold text-slate-800">{t.name}</span>
+                <span className="text-xs text-slate-400">{t.schema}</span>
+                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded ml-auto">{(t.columns || []).length} columns</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(t.columns || []).slice(0, 30).map(c => <span key={c.name} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono">{c.name}</span>)}
+                {(t.columns || []).length > 30 && <span className="text-xs text-slate-400 px-2 py-0.5">+{t.columns.length - 30} more</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminSection() {
+  const [tab, setTab] = useState("connections");
+  const tabs = [
+    { id: "connections", label: "Connections" },
+    { id: "rules",       label: "Rule Library" },
+    { id: "exportimport", label: "Export / Import" },
+    { id: "sources",     label: "Catalog Sources" },
+  ];
+  return (
+    <div>
+      <SectionTabs tabs={tabs} active={tab} onChange={setTab}/>
+      <div className={tab === "connections"  ? "" : "hidden"}><AdminConnectionsScreen/></div>
+      <div className={tab === "rules"        ? "" : "hidden"}><AdminRuleLibraryScreen/></div>
+      <div className={tab === "exportimport" ? "" : "hidden"}><AdminExportImportScreen/></div>
+      <div className={tab === "sources"      ? "" : "hidden"}><AdminCatalogSourcesScreen/></div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Unattended mode — headless orchestrators (Govern sidebar entry)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function UnattendedScreen({ scannedTables }) {
+  const [onbForm, setOnbForm] = useState({ tables: (scannedTables || []).join(", "), dry_run: false });
+  const [onbRunning, setOnbRunning] = useState(false);
+  const [onbError, setOnbError]     = useState(null);
+  const [onbOut, setOnbOut]         = useState(null);
+  const [pgForm, setPgForm] = useState({ object_name: "", dry_run: true });
+  const [pgRunning, setPgRunning] = useState(false);
+  const [pgError, setPgError]     = useState(null);
+  const [pgOut, setPgOut]         = useState(null);
+
+  const runOnboard = async () => {
+    setOnbRunning(true); setOnbError(null); setOnbOut(null);
+    try {
+      const table_names = onbForm.tables.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      setOnbOut(await apiPost("/api/govern/unattended", { table_names, dry_run: onbForm.dry_run }));
+    } catch (e) { setOnbError(e.message); }
+    finally { setOnbRunning(false); }
+  };
+
+  const runProfileGovern = async () => {
+    setPgRunning(true); setPgError(null); setPgOut(null);
+    try {
+      setPgOut(await apiPost("/api/profile/unattended", { object_name: pgForm.object_name, dry_run: pgForm.dry_run, auto_create_rules: !pgForm.dry_run }));
+    } catch (e) { setPgError(e.message); }
+    finally { setPgRunning(false); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-start gap-3">
+        <span className="text-xl">⚡</span>
+        <div className="text-xs text-indigo-700 leading-relaxed">
+          <strong>Autonomous unattended operations.</strong> The same governed pipeline the wizard walks through, run headless in one call — this is what a scheduler or external agent invokes. Approval gates are replaced by dry-run previews.
+        </div>
+      </div>
+
+      {/* onboard_and_govern — steps 1-5 */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Onboard &amp; govern (steps 1-5: scan → taxonomy → domains → system → curate)</div>
+        <Field label="Tables"><textarea className={INPUT_CLS + " font-mono"} rows="2" placeholder="TABLE_A, TABLE_B" value={onbForm.tables} onChange={e => setOnbForm(f => ({ ...f, tables: e.target.value }))}/></Field>
+        <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+          <input type="checkbox" className="accent-violet-600" checked={onbForm.dry_run} onChange={e => setOnbForm(f => ({ ...f, dry_run: e.target.checked }))}/> Dry run (preview only — writes nothing)
+        </label>
+        <PrimaryButton onClick={runOnboard} running={onbRunning} disabled={!onbForm.tables.trim()}>⚡ Run onboarding pipeline</PrimaryButton>
+        <ErrorBox error={onbError}/>
+        {onbOut && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <SummaryCard label="Succeeded" value={onbOut.summary?.succeeded ?? 0} color="text-emerald-600"/>
+              <SummaryCard label="Failed" value={onbOut.summary?.failed ?? 0} color={onbOut.summary?.failed ? "text-red-600" : "text-slate-400"}/>
+              <SummaryCard label="Skipped" value={onbOut.summary?.skipped ?? 0} color="text-amber-600"/>
+            </div>
+            <PipelineStepsList steps={onbOut.pipeline_steps}/>
+          </div>
+        )}
+      </div>
+
+      {/* profile_and_govern — steps 6-9 */}
+      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm space-y-3">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Profile &amp; govern (steps 6-9: profile → recommend → create rules → execute)</div>
+        <Field label="Table"><input className={INPUT_CLS + " font-mono"} placeholder="TABLE_NAME" value={pgForm.object_name} onChange={e => setPgForm(f => ({ ...f, object_name: e.target.value }))}/></Field>
+        <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+          <input type="checkbox" className="accent-violet-600" checked={pgForm.dry_run} onChange={e => setPgForm(f => ({ ...f, dry_run: e.target.checked }))}/> Dry run (stop after recommendations)
+        </label>
+        <PrimaryButton onClick={runProfileGovern} running={pgRunning} disabled={!pgForm.object_name}>⚡ Run profiling pipeline</PrimaryButton>
+        <ErrorBox error={pgError}/>
+        {pgOut && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <SummaryCard label="Recommendations" value={pgOut.recommendation_count ?? 0}/>
+              <SummaryCard label="OK / failed" value={`${pgOut.summary?.ok ?? 0} / ${pgOut.summary?.failed ?? 0}`} color="text-slate-600"/>
+              <SummaryCard label="Rows profiled" value={pgOut.profile_summary?.total_rows ?? "—"} color="text-slate-600"/>
+            </div>
+            <PipelineStepsList steps={pgOut.steps}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const RESULT_RENDERERS = {
   discover:           DiscoverResult,
   scan:               ScanResult,
   taxonomy:           TaxonomyResult,
   domain_structure:   DomainStructureResult,
   curate:             CurateResult,
+  profile:            ProfileResult,
+  recommend_rules:    RecommendRulesResult,
   data_quality:       DataQualityResult,
   publish_governance: PublishGovernanceResult,
   create_collection:        CreateCollectionResult,
+  link_asset:               LinkAssetResult,
   publish_marketplace_full: PublishMarketplaceFullResult,
   configure_delivery:       ConfigureDeliveryResult,
   consumer_access:     ConsumerAccessResult,
@@ -1505,13 +3413,15 @@ function loadPersistedState() {
   } catch { return null; }
 }
 
-const VALID_STEP_IDS = new Set(STEPS.map(s => s.id));
+const ALL_STEP_IDS = new Set([...STEPS, ...MARKETPLACE_STEPS].map(s => s.id));
 
 function App() {
   const _saved = loadPersistedState();
+  const _initSection = SECTIONS.some(s => s.id === _saved?.activeSection) ? _saved.activeSection : "govern";
   const _savedStep = _saved?.activeStep;
-  const _initStep = (_savedStep && VALID_STEP_IDS.has(_savedStep)) ? _savedStep : "discover";
+  const _initStep = (_savedStep && (ALL_STEP_IDS.has(_savedStep) || _savedStep === "unattended")) ? _savedStep : "discover";
 
+  const [activeSection, setActiveSection] = useState(_initSection);
   const [activeStep, setActiveStep] = useState(_initStep);
   const [statuses,   setStatuses]   = useState(_saved?.statuses   || {});
   const [results,    setResults]    = useState(_saved?.results     || {});
@@ -1519,6 +3429,10 @@ function App() {
   const [stepProgress, setStepProgress] = useState({});
   const [showJson,   setShowJson]   = useState({});
   const abortRef = useRef(null);
+  const [config, setConfig] = useState(null);
+  const [sessionExpired, setSessionExpired] = useState(null);
+  // Screens sections mount lazily on first visit, then stay mounted (state survives nav).
+  const [visited, setVisited] = useState({ [_initSection]: true });
 
   const [scanTable,  setScanTable]  = useState(_saved?.scanTable  || "");
   const [scanSchema, setScanSchema] = useState(_saved?.scanSchema || "");
@@ -1529,16 +3443,35 @@ function App() {
   const [domainRenames,  setDomainRenames]  = useState({});
   const [domainApproving, setDomainApproving] = useState(false);
   const [subRunning, setSubRunning] = useState({});
+  // Phase 1: profiling + recommendation state
+  const [profileObject, setProfileObject] = useState(_saved?.profileObject || "");
+  const [profileMode,   setProfileMode]   = useState(_saved?.profileMode   || "local");
+  const [recSelected,   setRecSelected]   = useState(new Set(_saved?.recSelected || []));
+
+  // Always-fresh results for use inside runStep (avoids stale closures).
+  const resultsRef = useRef(results);
+  useEffect(() => { resultsRef.current = results; });
+
+  useEffect(() => {
+    notifySessionExpired = (msg) => setSessionExpired(msg);
+    return () => { notifySessionExpired = null; };
+  }, []);
+  useEffect(() => { apiGet("/api/config").then(setConfig).catch(() => {}); }, []);
 
   // Persist key state to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource }));
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        activeSection, activeStep, statuses, results, scanTable, scanSchema, scanSource,
+        profileObject, profileMode, recSelected: Array.from(recSelected),
+      }));
     } catch {}
-  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource]);
+  }, [activeSection, activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, recSelected]);
 
   const discoverTables    = results.discover?.result?.tables_for_selection || [];
   const discoverSources   = results.discover?.result?.catalog_sources_grouped || [];
+  const scannedNames      = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
+  const profileObjectEffective = profileObject || scannedNames[0] || "";
 
   const setStatus = (id, s) => {
     setStatuses(prev => ({ ...prev, [id]: s }));
@@ -1584,20 +3517,14 @@ function App() {
     try {
       const data = await apiPost(apiPath, {});
       setResults(prev => ({ ...prev, [parentStepId]: { ...(prev[parentStepId] || {}), [subKey]: data } }));
-      const allKeys = parentStepId === "publish_marketplace_full"
-        ? ["category","data_asset","collection","publish"]
-        : ["usage_context","delivery_template","terms_of_use","delivery_target"];
-      setStatuses(prev => {
-        const merged = { ...(prev[parentStepId] === STATUS.done ? {} : {}), ...((results[parentStepId] || {})) };
-        return { ...prev, [parentStepId]: STATUS.done };
-      });
+      setStatuses(prev => ({ ...prev, [parentStepId]: STATUS.done }));
     } catch(e) {
       setResults(prev => ({ ...prev, [parentStepId]: { ...(prev[parentStepId] || {}), [subKey]: { status: "failed", error: e.message } } }));
       setStatuses(prev => ({ ...prev, [parentStepId]: STATUS.done }));
     } finally {
       setSubRunning(prev => ({ ...prev, [subKey]: false }));
     }
-  }, [results]);
+  }, []);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -1607,10 +3534,11 @@ function App() {
     try {
       let data;
       const sig = controller.signal;
+      const res = resultsRef.current;
       // Basis for full-schema time estimates on steps 3-6 (from the Scan sample).
       const estBasis = {
-        sample: results.scan?.tables_scanned ?? (results.scan?.columns?.filter(Boolean).length || 0),
-        total:  results.scan?.total_in_schema ?? 0,
+        sample: res.scan?.tables_scanned ?? (res.scan?.columns?.filter(Boolean).length || 0),
+        total:  res.scan?.total_in_schema ?? 0,
       };
       if      (stepId === "discover")         data = await apiPost("/api/step/discover", {}, sig);
       else if (stepId === "scan") {
@@ -1621,7 +3549,7 @@ function App() {
         let schemaArg      = scanSchema;
         if (isAllSchemas) {
           // Sample a couple of tables from every schema across all sources; extrapolate to the grand total.
-          const groups = results.discover?.result?.catalog_sources_grouped || [];
+          const groups = res.discover?.result?.catalog_sources_grouped || [];
           const sample = [];
           groups.forEach(cs => (cs.schemas || []).forEach(s => {
             const tbls = s.tables || [];
@@ -1631,15 +3559,15 @@ function App() {
           scanTableNames = sample;
           schemaArg = "";   // cross-schema — backend resolves each table by name
         } else if (isAll) {
-          const src = (results.discover?.result?.catalog_sources_grouped || []).find(cs => cs.source === scanSource);
+          const src = (res.discover?.result?.catalog_sources_grouped || []).find(cs => cs.source === scanSource);
           const schemaObj = (src?.schemas || []).find(s => s.schema === scanSchema);
           const allTables = schemaObj?.tables || [];
-          totalInSchema   = allTables.length || (results.discover?.result?.tables_for_selection || []).filter(t => t.schema === scanSchema).length;
+          totalInSchema   = allTables.length || (res.discover?.result?.tables_for_selection || []).filter(t => t.schema === scanSchema).length;
           const fromGrouped = allTables.map(t => t.name).slice(0, 5);
           if (fromGrouped.length > 0) {
             scanTableNames = fromGrouped;
           } else {
-            scanTableNames = (results.discover?.result?.tables_for_selection || [])
+            scanTableNames = (res.discover?.result?.tables_for_selection || [])
               .filter(t => t.schema === scanSchema)
               .map(t => t.name)
               .slice(0, 5);
@@ -1655,10 +3583,10 @@ function App() {
       }
       else if (stepId === "taxonomy") {
         // Collect scanned table names from the scan result columns
-        const scannedCols = results.scan?.columns || [];
-        const scannedNames = scannedCols.map(c => c?.table).filter(Boolean);
+        const scannedCols = res.scan?.columns || [];
+        const scannedTableNames = scannedCols.map(c => c?.table).filter(Boolean);
         data = await apiPost("/api/step/taxonomy", {
-          table_names: scannedNames,
+          table_names: scannedTableNames,
           sample_tables: estBasis.sample, total_in_schema: estBasis.total,
         }, sig);
       }
@@ -1678,11 +3606,52 @@ function App() {
         data = preview;
       }
       else if (stepId === "curate")            data = await apiPost("/api/step/curate", { sample_tables: estBasis.sample, total_in_schema: estBasis.total }, sig);
+      else if (stepId === "profile") {
+        const objName = profileObjectEffective;
+        if (!objName) throw new Error("Pick a table to profile (scan one first, or type a name).");
+        if (profileMode === "local") {
+          data = await apiPost("/api/profile/compute_local", { object_name: objName }, sig);
+        } else {
+          // Informatica profiling is asynchronous: execute returns a job id and
+          // we poll the job, then read statistics from CDGC.
+          const exec = await apiPost("/api/profile/execute", { object_name: objName, auto_create: true }, sig);
+          const jobId = exec.profile_job_id;
+          let jobState = "UNKNOWN";
+          if (jobId) {
+            for (let i = 0; i < 40; i++) {
+              if (sig.aborted) { const e = new Error("aborted"); e.name = "AbortError"; throw e; }
+              await new Promise(r => setTimeout(r, 6000));
+              try {
+                const st = await apiPost("/api/profile/job_status", { job_id: jobId }, sig);
+                jobState = String(st.job?.status || "").toUpperCase();
+                if (["COMPLETE", "SUCCESS", "FINISH"].some(x => jobState.includes(x))) break;
+                if (["FAILED", "ERROR", "CANCEL"].some(x => jobState.includes(x))) {
+                  throw new Error(`Profiling job ${jobState}: ${st.job?.errorMessage || "see IDMC monitor"}`);
+                }
+              } catch (pe) {
+                if (pe.name === "AbortError" || /Profiling job/.test(pe.message)) throw pe;
+                // transient poll errors tolerated
+              }
+            }
+          }
+          data = await apiPost("/api/profile/results", { object_name: objName }, sig);
+          data.profile_job = { job_id: jobId, state: jobState };
+        }
+        data.object_name = objName;
+      }
+      else if (stepId === "recommend_rules") {
+        const prof = res.profile;
+        if (!prof || !prof.columns) throw new Error("Run Profile Data (step 6) first — recommendations reason over its statistics.");
+        data = await apiPost("/api/profile/recommend", {
+          profile_results: { total_rows: prof.total_rows || 0, columns: prof.columns || {} },
+        }, sig);
+        setRecSelected(new Set((data.recommendations || []).map((r, i) => r.suggested_rule_name || `${r.column_name}-${r.dimension}-${i}`)));
+      }
       else if (stepId === "data_quality")      data = await apiPost("/api/step/data_quality", { sample_tables: estBasis.sample, total_in_schema: estBasis.total }, sig);
       else if (stepId === "publish_governance")    data = await apiPost("/api/step/mcc_scan", {}, sig);
       else if (stepId === "create_collection")     data = await apiPost("/api/step/create_collection", {}, sig);
+      else if (stepId === "link_asset")            data = await apiPost("/api/step/link_asset_to_collection", {}, sig);
       else if (stepId === "publish_marketplace_full") data = await apiPost("/api/step/publish_marketplace", {}, sig);
-      else if (stepId === "publish_marketplace_full") data = await apiPost("/api/step/publish_marketplace_full", {}, sig);
       else if (stepId === "configure_delivery")       data = await apiPost("/api/step/configure_delivery", {}, sig);
       else if (stepId === "consumer_access")        data = await apiPost("/api/step/consumer_access", {}, sig);
       else if (stepId === "auto_approve_access") {
@@ -1710,7 +3679,7 @@ function App() {
       setErrors(prev => ({ ...prev, [stepId]: err.message }));
       setStatus(stepId, STATUS.error);
     }
-  }, [scanTable, scanSchema, scanSource]);
+  }, [scanTable, scanSchema, scanSource, profileObjectEffective, profileMode]);
 
   const approveDomainStructure = useCallback(async () => {
     setDomainApproving(true);
@@ -1731,7 +3700,7 @@ function App() {
     } finally {
       setDomainApproving(false);
     }
-  }, [domainSelected]);
+  }, [domainSelected, domainRenames]);
 
   const toggleDomainItem = useCallback((name) => {
     setDomainSelected(prev => {
@@ -1831,16 +3800,42 @@ function App() {
     setResults(prev => ({ ...prev, [stepId]: null }));
   }, []);
 
-  const active = STEPS.find(s => s.id === activeStep) || STEPS[0];
+  // Recommend Rules selection (flows into the Data Quality step)
+  const toggleRec = useCallback((key) => {
+    setRecSelected(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  }, []);
+  const setAllRecs = useCallback((on) => {
+    const recs = (resultsRef.current.recommend_rules?.recommendations) || [];
+    setRecSelected(on ? new Set(recs.map((r, i) => r.suggested_rule_name || `${r.column_name}-${r.dimension}-${i}`)) : new Set());
+  }, []);
+
+  const sectionDef = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0];
+  const steps = PIPELINE_STEPS[activeSection] || STEPS;
+  const isPipeline = sectionDef.kind === "pipeline";
+  const isUnattended = activeSection === "govern" && activeStep === "unattended";
+
+  const switchSection = (sec) => {
+    setActiveSection(sec.id);
+    setVisited(v => ({ ...v, [sec.id]: true }));
+    if (sec.kind === "pipeline") {
+      const secSteps = PIPELINE_STEPS[sec.id];
+      setActiveStep(prev => (secSteps.some(s => s.id === prev) || (sec.id === "govern" && prev === "unattended")) ? prev : secSteps[0].id);
+    }
+  };
+
+  const active = steps.find(s => s.id === activeStep) || steps[0];
   const ResultComponent = RESULT_RENDERERS[activeStep];
   // Domain Structure (Step 4) reads the taxonomy from the active table slot; it must not
   // run before Step 3 has produced a taxonomy for the selected table, or it silently
   // writes nothing. Taxonomy status persists in localStorage across reloads.
   const taxonomyReady = statuses["taxonomy"] === STATUS.done || !!results.taxonomy;
+  // Recommend Rules reasons over profile output only — gate it rather than
+  // letting a user reach it with empty input.
+  const profileReady = statuses["profile"] === STATUS.done || !!results.profile;
   const canRun = (activeStep !== "scan" || (scanSchema && scanTable))
-              && (activeStep !== "marketplace" || marketplaceCollectionId)
-              && (activeStep !== "domain_structure" || taxonomyReady);
-  // scanSource is optional — schema alone is sufficient for the scan API
+              && (activeStep !== "domain_structure" || taxonomyReady)
+              && (activeStep !== "profile" || !!profileObjectEffective)
+              && (activeStep !== "recommend_rules" || profileReady);
 
   return (
     <div className="flex flex-col h-screen text-slate-800">
@@ -1855,8 +3850,8 @@ function App() {
           </div>
         </div>
         <div className="h-5 w-px bg-slate-200 mx-1"/>
-        <div className="text-sm text-slate-500">IDMC CDGC Onboarding Pipeline</div>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="text-sm text-slate-500">{sectionDef.desc}</div>
+        <div className="ml-auto flex items-center gap-4">
           <button
             onClick={async () => {
               // Clear SERVER-side pipeline state too, not just the browser — otherwise
@@ -1867,46 +3862,117 @@ function App() {
             className="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-500 font-semibold bg-red-50 hover:bg-red-100 hover:border-red-400 transition-colors"
             title="Clear session (server + browser) and start fresh"
           >↺ New Session</button>
-          <div className="w-2 h-2 rounded-full bg-emerald-500"/>
-          <span className="text-xs text-slate-400 font-medium">MCP servers online</span>
+          <HealthIndicator/>
         </div>
       </header>
+
+      <SessionExpiredBanner message={sessionExpired} onDismiss={() => setSessionExpired(null)}/>
 
       <div className="flex flex-1 overflow-hidden">
 
         {/* Sidebar */}
-        <aside className="w-60 bg-slate-100 border-r border-slate-300 flex flex-col shrink-0 overflow-hidden py-1">
-          {STEPS.map(step => {
-            const status = statuses[step.id] || STATUS.idle;
-            const isActive = step.id === activeStep;
-            return (
-              <button
-                key={step.id}
-                onClick={() => setActiveStep(step.id)}
-                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors text-xs
-                  ${isActive
-                    ? "bg-indigo-50 text-indigo-700 border-r-2 border-brand font-semibold"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}
-              >
-                <StatusDot status={status}/>
-                <span className="flex-1 truncate">{step.label}</span>
-                <span className={`text-xs font-medium ${isActive ? "text-indigo-400" : "text-slate-300"}`}>{step.num}</span>
-              </button>
-            );
-          })}
+        <aside className="w-60 bg-slate-100 border-r border-slate-300 flex flex-col shrink-0 overflow-hidden">
+          {/* Section switcher */}
+          <div className="px-2 py-2 space-y-0.5 border-b border-slate-300">
+            {SECTIONS.map(sec => {
+              const isActiveSec = sec.id === activeSection;
+              return (
+                <button key={sec.id} onClick={() => switchSection(sec)}
+                  className={`w-full text-left px-3 py-1.5 rounded-lg flex items-center gap-2.5 transition-colors text-sm
+                    ${isActiveSec ? "bg-indigo-600 text-white font-semibold shadow-sm" : "text-slate-600 hover:bg-slate-200"}`}>
+                  <span className={`text-base leading-none ${isActiveSec ? "" : "text-slate-400"}`}>{sec.icon}</span>
+                  <span className="flex-1">{sec.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Pipeline steps (Govern / Marketplace) */}
+          {isPipeline && (
+            <div className="flex-1 overflow-y-auto scrollbar-thin py-1">
+              {steps.map(step => {
+                const status = statuses[step.id] || STATUS.idle;
+                const isActive = step.id === activeStep;
+                return (
+                  <button
+                    key={step.id}
+                    onClick={() => setActiveStep(step.id)}
+                    className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors text-xs
+                      ${isActive
+                        ? "bg-indigo-50 text-indigo-700 border-r-2 border-brand font-semibold"
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}
+                  >
+                    <StatusDot status={status}/>
+                    <span className="flex-1 truncate">{step.label}</span>
+                    <span className={`text-xs font-medium ${isActive ? "text-indigo-400" : "text-slate-300"}`}>{step.num}</span>
+                  </button>
+                );
+              })}
+              {activeSection === "govern" && (
+                <>
+                  <div className="mx-3 my-1.5 border-t border-slate-200"/>
+                  <button
+                    onClick={() => setActiveStep("unattended")}
+                    className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors text-xs
+                      ${isUnattended
+                        ? "bg-indigo-50 text-indigo-700 border-r-2 border-brand font-semibold"
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}
+                  >
+                    <span className="text-amber-500">⚡</span>
+                    <span className="flex-1 truncate">Unattended Mode</span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {!isPipeline && (
+            <div className="px-4 py-4 text-xs text-slate-400 leading-relaxed">
+              {sectionDef.desc}
+            </div>
+          )}
         </aside>
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto scrollbar-thin bg-slate-200 p-6">
+
+          {/* Standalone sections — mounted on first visit, kept alive across navigation */}
+          {!isPipeline && (
+            <div className="max-w-5xl mx-auto space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-slate-800">{sectionDef.label}</h1>
+                <p className="text-sm text-slate-500 mt-0.5">{sectionDef.desc}</p>
+              </div>
+              {visited.operate  && <div className={activeSection === "operate"  ? "" : "hidden"}><OperateSection config={config}/></div>}
+              {visited.monitor  && <div className={activeSection === "monitor"  ? "" : "hidden"}><MonitorSection/></div>}
+              {visited.explore  && <div className={activeSection === "explore"  ? "" : "hidden"}><ExploreSection/></div>}
+              {visited.glossary && <div className={activeSection === "glossary" ? "" : "hidden"}><GlossarySection/></div>}
+              {visited.admin    && <div className={activeSection === "admin"    ? "" : "hidden"}><AdminSection/></div>}
+            </div>
+          )}
+
+          {/* Unattended mode (Govern) */}
+          {isPipeline && isUnattended && (
+            <div className="max-w-2xl mx-auto space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-slate-800">Unattended Mode</h1>
+                <p className="text-sm text-slate-500 mt-0.5">Headless orchestration of the same governed pipeline — dataset onboarding automation.</p>
+              </div>
+              <UnattendedScreen scannedTables={scannedNames}/>
+            </div>
+          )}
+
+          {/* Pipeline step UI (Govern / Marketplace) */}
+          {isPipeline && !isUnattended && (
           <div className="max-w-2xl mx-auto space-y-5">
 
             {/* Step header */}
             <div>
               <div className="flex items-center gap-2 mb-1">
-                {(() => { const idx = STEPS.findIndex(s => s.id === activeStep); const prev = STEPS[idx - 1]; return prev ? (
+                {(() => { const idx = steps.findIndex(s => s.id === activeStep); const prev = steps[idx - 1]; return prev ? (
                   <button onClick={() => setActiveStep(prev.id)} className="text-xs text-slate-400 hover:text-brand font-medium mr-1">← {prev.label}</button>
                 ) : null; })()}
-                <span className="text-xs font-mono text-slate-400 font-medium">STEP {active.num} / {STEPS.length}</span>
+                <span className="text-xs font-mono text-slate-400 font-medium">STEP {active.num} / {steps.length}</span>
                 {statuses[activeStep] === STATUS.running && <Spinner/>}
               </div>
               <h1 className="text-xl font-bold text-slate-800">{active.label}</h1>
@@ -1963,7 +4029,7 @@ function App() {
                           <select
                             value={scanSchema}
                             onChange={e => pickSchema(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100"
+                            className={INPUT_CLS}
                           >
                             <option value="">Select a schema…</option>
                             {schemaNames.length > 0 && grandTotalTables > 0 && (
@@ -1974,7 +4040,7 @@ function App() {
                         ) : (
                           <input type="text" placeholder="SCHEMA_NAME" value={scanSchema}
                             onChange={e => pickSchema(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 font-mono"
+                            className={INPUT_CLS + " font-mono"}
                           />
                         )}
                       </div>
@@ -1985,7 +4051,7 @@ function App() {
                           <select
                             value={scanTable}
                             onChange={e => setScanTable(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100"
+                            className={INPUT_CLS}
                           >
                             {(() => {
                               const tbl = tablesInSchema.length > 0 ? tablesInSchema : fallbackTables;
@@ -2000,7 +4066,7 @@ function App() {
                         ) : (
                           <input type="text" placeholder="TABLE_NAME (or leave blank to scan all)" value={scanTable}
                             onChange={e => setScanTable(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 font-mono"
+                            className={INPUT_CLS + " font-mono"}
                           />
                         )}
                       </div>
@@ -2010,20 +4076,46 @@ function App() {
               </div>
             )}
 
-            {/* Marketplace collection ID input */}
-            {activeStep === "marketplace" && (
+            {/* Profile inputs (Govern step 6) */}
+            {activeStep === "profile" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div>
-                  <label className="block text-xs text-slate-500 font-medium mb-1">Data Marketplace Collection ID</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. a1b2c3d4-e5f6-..."
-                    value={marketplaceCollectionId}
-                    onChange={e => setMarketplaceCollectionId(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 font-mono"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">Found in your DMP instance under Data Collections. Set <code>DMP_COLLECTION_ID</code> in .env to pre-fill.</p>
-                </div>
+                <Field label="Table to profile">
+                  {scannedNames.length > 0 ? (
+                    <select className={INPUT_CLS} value={profileObjectEffective} onChange={e => setProfileObject(e.target.value)}>
+                      {scannedNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  ) : (
+                    <input className={INPUT_CLS + " font-mono"} placeholder="TABLE_NAME (scan a table first to pick from a list)" value={profileObject} onChange={e => setProfileObject(e.target.value)}/>
+                  )}
+                </Field>
+                <Field label="Statistics source" hint={profileMode === "local"
+                    ? "Direct warehouse query — synchronous, exact counts. Use when the connector can't enumerate columns."
+                    : "Runs an IDMC profiling job, then reads statistics from CDGC. Asynchronous — the step polls the job and can take a few minutes."}>
+                  <div className="flex gap-2">
+                    <button onClick={() => setProfileMode("local")}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "local" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                      Compute locally (Snowflake)
+                    </button>
+                    <button onClick={() => setProfileMode("service")}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "service" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                      Informatica profiling service
+                    </button>
+                  </div>
+                </Field>
+              </div>
+            )}
+
+            {/* Recommend Rules gate notice */}
+            {activeStep === "recommend_rules" && !profileReady && (
+              <EmptyState icon="◍" title="Profile Data has not run yet"
+                body="Rule recommendations are pure reasoning over profiling statistics — there is nothing to recommend from until step 6 produces per-column numbers. Run Profile Data first."/>
+            )}
+
+            {/* Data Quality: recommendations carried in from step 7 */}
+            {activeStep === "data_quality" && recSelected.size > 0 && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
+                ❋ <strong>{recSelected.size} evidence-backed recommendation{recSelected.size === 1 ? "" : "s"}</strong> approved in Recommend Rules and carried into this run:
+                <span className="font-mono"> {Array.from(recSelected).slice(0, 5).join(", ")}{recSelected.size > 5 ? ` +${recSelected.size - 5} more` : ""}</span>
               </div>
             )}
 
@@ -2042,7 +4134,7 @@ function App() {
               />
             )}
 
-            {/* Sub-step buttons for Steps 10 & 11 */}
+            {/* Sub-step buttons */}
             {(activeStep === "data_quality" || activeStep === "create_collection" || activeStep === "configure_delivery") && (() => {
               const subSteps = activeStep === "data_quality" ? [
                 { key: "dq_rules", label: "DQ Rules",       path: "/api/step/dq_rules" },
@@ -2108,9 +4200,22 @@ function App() {
                 )}
               </button>
 
+              {activeStep === "consumer_access" && statuses[activeStep] !== STATUS.running && (
+                <button
+                  onClick={() => runStep("auto_approve_access")}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-emerald-700 border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 transition-all"
+                  title="Place the order and approve it automatically"
+                >⚡ Order + auto-approve</button>
+              )}
+
               {activeStep === "domain_structure" && !taxonomyReady && (
                 <span className="text-xs text-amber-600 font-medium">
                   Run <strong>Generate Taxonomy</strong> (Step 3) for this table first.
+                </span>
+              )}
+              {activeStep === "recommend_rules" && !profileReady && (
+                <span className="text-xs text-amber-600 font-medium">
+                  Run <strong>Profile Data</strong> (Step 6) first.
                 </span>
               )}
 
@@ -2144,8 +4249,8 @@ function App() {
 
             {/* Skipped notice */}
             {statuses[activeStep] === STATUS.skipped && (() => {
-              const idx = STEPS.findIndex(s => s.id === activeStep);
-              const next = STEPS[idx + 1];
+              const idx = steps.findIndex(s => s.id === activeStep);
+              const next = steps[idx + 1];
               return (
                 <div className="space-y-3">
                   <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm flex items-center gap-3">
@@ -2184,8 +4289,8 @@ function App() {
 
                 {/* Next button (top) */}
                 {(statuses[activeStep] === STATUS.done || statuses[activeStep] === STATUS.skipped) && (() => {
-                  const idx = STEPS.findIndex(s => s.id === activeStep);
-                  const next = STEPS[idx + 1];
+                  const idx = steps.findIndex(s => s.id === activeStep);
+                  const next = steps[idx + 1];
                   if (!next) return null;
                   return (
                     <div className="flex justify-end">
@@ -2202,14 +4307,16 @@ function App() {
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
                   {showJson[activeStep]
                     ? <JsonViewer data={results[activeStep]}/>
-                    : <ResultComponent data={results[activeStep]} domainItems={domainItems} domainSelected={domainSelected} scanSource={scanSource} scanSchema={scanSchema}/>
+                    : <ResultComponent data={results[activeStep]} domainItems={domainItems} domainSelected={domainSelected}
+                        scanSource={scanSource} scanSchema={scanSchema}
+                        recSelected={recSelected} onToggleRec={toggleRec} onSetAllRecs={setAllRecs}/>
                   }
                 </div>
 
                 {/* Next button (bottom) */}
                 {(statuses[activeStep] === STATUS.done || statuses[activeStep] === STATUS.skipped) && (() => {
-                  const idx = STEPS.findIndex(s => s.id === activeStep);
-                  const next = STEPS[idx + 1];
+                  const idx = steps.findIndex(s => s.id === activeStep);
+                  const next = steps[idx + 1];
                   if (!next) return null;
                   return (
                     <div className="flex justify-end pt-1">
@@ -2226,6 +4333,7 @@ function App() {
             )}
 
           </div>
+          )}
         </main>
 
       </div>

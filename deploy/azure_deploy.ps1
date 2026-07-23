@@ -105,6 +105,10 @@ az containerapp job create `
     "SNOWFLAKE_GOVTEST_DB=GOVERNANCE_SCALE_TEST" `
     "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
     "GOVERNANCE_ENGINE_URL=http://127.0.0.1:9765/mcp" `
+    "LINEAGE_REPORTER_URL=http://127.0.0.1:9766/mcp" `
+    "GLOSSARY_MANAGER_URL=http://127.0.0.1:9767/mcp" `
+    "DQ_MONITOR_URL=http://127.0.0.1:9768/mcp" `
+    "DATA_ONBOARDING_URL=http://127.0.0.1:9769/mcp" `
     "AI_GOVERNANCE_URL=http://127.0.0.1:9770/mcp" `
   --secrets `
     "idmc-pass=$($env_vars['IDMC_PASS'])" `
