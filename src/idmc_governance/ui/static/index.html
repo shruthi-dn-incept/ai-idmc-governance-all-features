@@ -90,7 +90,7 @@ const STEPS = [
       { tool: "create_domain_structure",   key: "domain_structure", parent: true },
       { tool: "create_system_and_dataset", key: "system_dataset",   route: "/api/step/system_dataset" },
     ] },
-  { id: "curate", num: 6, label: "Curate Columns", icon: "◩", route: "/api/step/curate", gate: true,
+  { id: "curate", num: 6, label: "Curate Columns", icon: "◩", route: "/api/step/curate", gate: true, gatePhase: "Phase 5",
     desc: "Link every column to its matching business term.",
     substeps: [
       { tool: "suggest_terms_for_asset", key: "suggest_terms_for_asset", route: null, note: "Next release (Phase 5)" },
@@ -163,7 +163,7 @@ const STEPS = [
       { tool: "create_delivery_target",     key: "delivery_target",   route: "/api/step/delivery_target" },
     ] },
   { id: "consumer_access", num: 15, label: "Consumer Access", icon: "✓", route: "/api/step/consumer_access",
-    gateOn: ["approve_consumer_order", "withdraw_consumer_access"],
+    gateOn: ["approve_consumer_order", "withdraw_consumer_access"], gatePhase: "Phase 7",
     desc: "Place, approve, verify and withdraw consumer access to the published collection.",
     substeps: [
       { tool: "create_consumer_access",   key: "consumer_access", parent: true },
@@ -863,6 +863,14 @@ function DQRulesResult({ data }) {
         <SummaryCard label="Rule specs"  value={s.rule_count ?? 0}/>
         <SummaryCard label="Occurrences" value={s.occurrence_count ?? 0}/>
         <SummaryCard label="Errors"      value={s.error_count ?? 0} color={s.error_count ? "text-red-600" : "text-slate-400"}/>
+      </div>
+      {/* Informational, not a warning — amber is reserved for real review gates */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex items-center gap-3">
+        <span className="text-xl">⏱</span>
+        <div>
+          <div className="text-sm font-semibold text-indigo-700">Scores publish at step 10</div>
+          <div className="text-xs text-indigo-600">Rules and occurrences are registered; CDGC's Data Quality tab stays empty until Publish to Catalog uploads scores. That gap is expected, not a failure.</div>
+        </div>
       </div>
       {(rules.rules_created || []).length > 0 && (
         <div className="bg-slate-100 border border-slate-300 rounded-lg p-3">
@@ -1662,7 +1670,8 @@ function HealthIndicator() {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 
-const LS_KEY = "idmc_gov_ui_state";
+// v2: step 8 results changed shape when scores moved to step 10 — orphan old sessions.
+const LS_KEY = "idmc_gov_ui_state_v2";
 
 function loadPersistedState() {
   try {
@@ -2111,7 +2120,10 @@ function App() {
                 <StatusDot status={status}/>
                 <span className="flex-1 truncate">{step.label}</span>
                 {(step.gate || step.gateOn) && (
-                  <span className="text-amber-500" title={step.gateOn ? `Approval gate on: ${step.gateOn.join(", ")}` : "Approval gate"}>✋</span>
+                  <span className={step.gatePhase ? "text-slate-300" : "text-amber-500"}
+                    title={step.gatePhase
+                      ? `Review gate ships in ${step.gatePhase}`
+                      : (step.gateOn ? `Approval gate on: ${step.gateOn.join(", ")}` : "Approval gate")}>✋</span>
                 )}
                 <span className={`text-xs font-medium ${isActive ? "text-indigo-400" : "text-slate-300"}`}>{step.num}</span>
               </button>
@@ -2242,6 +2254,22 @@ function App() {
                   <div className="text-xs text-amber-700 mt-1 leading-relaxed">
                     The tools behind this step — <span className="font-mono">{(active.substeps || []).map(s => s.tool).join(", ")}</span> — are
                     deployed and reachable on the governance servers; this screen is not built yet.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Pending review gates: the badge must not promise review behaviour
+                that doesn't exist yet — same honesty treatment as stub steps */}
+            {!active.stub && active.gatePhase && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                <span className="text-xl">✋</span>
+                <div>
+                  <div className="text-sm font-semibold text-amber-800">Review gate ships in {active.gatePhase}</div>
+                  <div className="text-xs text-amber-700 mt-1 leading-relaxed">
+                    {active.gateOn
+                      ? `${active.gateOn.join(" and ")} will require explicit approval before executing; today they run directly.`
+                      : "This step will pause for steward review and approval; today it runs without one."}
                   </div>
                 </div>
               </div>
