@@ -1,25 +1,43 @@
 # IDMC console runbook — checks 2, 4, 5
 
-Three tasks, all in the IDMC UI, none doable in code. Do them in this order: check 2 has a fifteen-minute gate that decides whether the rest of the day is a build or an escalation.
+> ## ✅ ALL THREE COMPLETE (2026-07-24) — do NOT re-run
+>
+> This runbook's tasks are done. The procedure below is kept as the record of
+> how, and as a template for a fresh org. Current state:
+>
+> - **Check 2 — `M_DQ_Generic`: DONE.** Rebuilt as mapping `010YK217000000000092`
+>   (valid), declaring **`$Source$` + `$Target$` + `$Input_Field_Map$`** — a
+>   **3-parameter** contract, not the 7 below. The **Rule Specification field
+>   cannot be parameterized in this IDMC release** (no `Rule_Spec` param option —
+>   the org's original template hit the same wall, which is why it too had only
+>   Source/Target). The rule is therefore **fixed to `DE_RS_Null_Check`**, not
+>   parameterized; `Source_Filter` was dropped. `.env` points
+>   `IDMC_DQ_TEMPLATE_MAPPING_ID` at `…092` and `IDMC_DQ_CONNECTION_ID` at
+>   `SNOWFLAKE_INCEPT_GOV` (`010YK20B00000000004C`). `generate_dq_mapping_task`
+>   verified live binding all three params (task `010YK20Z0000000000CY`). **No
+>   binder code change was needed** — the 3-param contract matched the deployed
+>   binder exactly, so the "7-param + extra_parameters" plan below did not apply.
+>   Per-task rule *variation* is not achievable in this release; that's a
+>   product-roadmap line, not a defect.
+>
+> - **Check 4 — Relationship Discovery: DONE.** Scan ran; lineage populates on
+>   pipeline-fed tables. **Demo lineage against `patient_demographics_cleaned`**
+>   (or `customer_credit_card_data` / `daily_drug_performance`). Raw Snowflake
+>   `DQ_TEST` tables (e.g. `CUSTOMER_POSITIONS`) stay empty **by design** — no CDI
+>   mapping feeds them; that's the empty-state, not a failure.
+>
+> - **Check 5 — score history: DONE.** `CUSTOMER_POSITIONS` carries 4 DQ results
+>   with computed trends — step 11's trend renders. No backfill needed.
+>
+> **Demo-table split to remember:** govern + DQ scores live on `CUSTOMER_POSITIONS`;
+> lineage lives on the Databricks medallion tables. No single table is green on
+> both preflight check 4 and check 5 — switch tables deliberately between step 2
+> (lineage) and step 11 (scores). `preflight.sh` now scans all asset twins for
+> lineage (a name resolves to many; lineage often hangs off a non-Table twin).
 
-Procedure below comes from the last recorded attempt at `M_DQ_Generic` plus the API behaviour the tools depend on. **Exact menu labels vary between IDMC releases** — where the wording differs, the shape of the task is still right. Substitute your demo org's connection, database and schema for the examples.
-
-> **Repo note (2026-07-24, read before building):** the org's currently published
-> `M_DQ_Generic` (id in `.env`) declares only `$Source$` + `$Target$` — and that pair
-> is exactly what `generate_dq_mapping_task` binds today (it also binds
-> `$Input_Field_Map$` when a field map is passed; it never binds `Rule_Spec`,
-> `Src_Conn`, `Src_Object`, `Tgt_Conn`, `Tgt_Object` or `Source_Filter` — see
-> `governance_engine.py` `candidate_params`). The seven-parameter build below is the
-> TARGET contract for Phase 2, which will bind the extra four via
-> `extra_parameters`. Consequences:
->   1. Building the 7-param template does NOT break today's code — `$Source$`
->      and `$Target$` split into `$Src_Conn$`/`$Src_Object$`/`$Tgt_Conn$`/`$Tgt_Object$`
->      means the binder's two candidates simply don't match; Phase 2's route must
->      pass all bindings via `extra_parameters`. Until Phase 2 lands, generated
->      tasks against the NEW template will have at most `$Input_Field_Map$` bound.
->   2. Keep the OLD template's id in `.env` until Phase 2's binder work merges,
->      OR land both together. Swapping the id early silently unbinds source/target.
->   3. `preflight.sh` check 2 detects both contracts and names which one it found.
+The rest of this doc is the original build procedure — historical record. **The
+7-parameter table below is superseded**: this release supports the 3-parameter
+contract above (rule fixed, not parameterized).
 
 ---
 
