@@ -2574,16 +2574,8 @@ def _snowflake_connect():
             "pip install snowflake-connector-python"
         ) from e
     env = _read_env()
-    pwd = env.get("SNOWFLAKE_PASSWORD") or os.getenv("SNOWFLAKE_PASSWORD")
-    if not pwd:
-        raise RuntimeError(
-            "SNOWFLAKE_PASSWORD not set in .env. Add it (chmod 600 .env "
-            "to keep the file owner-only readable) before calling "
-            "compute_profile_from_snowflake."
-        )
-    return snowflake.connector.connect(
+    kwargs = dict(
         user=env.get("SNOWFLAKE_USER")      or SNOWFLAKE_DEFAULT_USER,
-        password=pwd,
         account=env.get("SNOWFLAKE_ACCOUNT") or SNOWFLAKE_DEFAULT_ACCOUNT,
         warehouse=env.get("SNOWFLAKE_WAREHOUSE") or SNOWFLAKE_DEFAULT_WAREHOUSE,
         database=env.get("SNOWFLAKE_DATABASE")   or SNOWFLAKE_DEFAULT_DATABASE,
@@ -2591,6 +2583,29 @@ def _snowflake_connect():
         client_session_keep_alive=False,
         login_timeout=30,
     )
+    # Key-pair auth first (SNOWFLAKE_PRIVATE_KEY_B64) — the same path
+    # common/snowflake.make_conn() and the scale pipeline use. The password
+    # fallback exists for orgs without key-pair auth; a rotated/stale password
+    # otherwise dead-ends step 3's "compute locally".
+    b64 = env.get("SNOWFLAKE_PRIVATE_KEY_B64") or os.getenv("SNOWFLAKE_PRIVATE_KEY_B64")
+    if b64:
+        import base64 as _b64
+        from cryptography.hazmat.primitives import serialization
+        pk = serialization.load_pem_private_key(_b64.b64decode(b64), password=None)
+        kwargs["private_key"] = pk.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    else:
+        pwd = env.get("SNOWFLAKE_PASSWORD") or os.getenv("SNOWFLAKE_PASSWORD")
+        if not pwd:
+            raise RuntimeError(
+                "Neither SNOWFLAKE_PRIVATE_KEY_B64 nor SNOWFLAKE_PASSWORD set in .env — "
+                "one is required for compute_profile_from_snowflake."
+            )
+        kwargs["password"] = pwd
+    return snowflake.connector.connect(**kwargs)
 
 
 def _quote_ident(ident: str) -> str:

@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time as _time
 from pathlib import Path
 from typing import Any
@@ -196,8 +197,21 @@ async def reset_session():
 @app.get("/api/config")
 async def get_config():
     env = _read_env_file()
+
+    def _usable(key: str) -> str:
+        v = (env.get(key) or "").strip()
+        return "" if v.startswith("your_") else v
+
+    template_id = _usable("IDMC_DQ_TEMPLATE_MAPPING_ID")
     return {
-        "dmp_collection_id": env.get("DMP_COLLECTION_ID", ""),
+        "dmp_collection_id":      env.get("DMP_COLLECTION_ID", ""),
+        # Step 9: absence of M_DQ_Generic must surface as setup guidance on
+        # step load, not as a run-time failure mid-demo.
+        "has_dq_template":        bool(template_id),
+        "dq_template_mapping_id": template_id,
+        "dq_connection_id":       _usable("IDMC_DQ_CONNECTION_ID"),
+        "dq_runtime_env_id":      _usable("IDMC_DQ_RUNTIME_ENV_ID"),
+        "dq_schema_path":         env.get("IDMC_DQ_SCHEMA_PATH", ""),
     }
 
 
@@ -231,40 +245,357 @@ async def get_config():
 # path but no ladder step binds to it directly.
 
 
-# ── Stub routes: ladder steps whose phases have not landed ────────────────────
-# Each returns 501 so the ladder renders complete — a rung that says "next
-# release" instead of a dead rung. The owning phase replaces the stub in place.
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 1 — step 3 Profile Data (governance_engine profiling tools)
+# ══════════════════════════════════════════════════════════════════════════════
 
-_STUB_STEPS = {
-    "profile":            ("Profile Data",        "Phase 1"),
-    "recommend_rules":    ("Recommend Rules",     "Phase 1"),
-    "schedule_execution": ("Schedule Execution",  "Phase 2"),
-}
+def _env_value(*keys: str) -> str:
+    """First usable value from .env — placeholder values ('your_...') count as unset."""
+    env = _read_env_file()
+    for k in keys:
+        v = (env.get(k) or "").strip()
+        if v and not v.startswith("your_"):
+            return v
+    return ""
 
 
-def _stub_response(step_key: str):
-    label, phase = _STUB_STEPS[step_key]
-    raise HTTPException(
-        status_code=501,
-        detail=f"{label} ships in the next release ({phase}). "
-               f"The MCP tools behind it are deployed and reachable; this step's "
-               f"screen is not built yet.",
-    )
+class ProfileStepRequest(BaseModel):
+    object_name: str
+    mode: str = "local"          # local (Snowflake direct) | service (IDMC profiling job)
+    database: str | None = None
+    schema: str | None = None
 
 
 @app.post("/api/step/profile")
-async def step_profile_stub():
-    _stub_response("profile")
+async def step_profile(req: ProfileStepRequest):
+    """Step 3 parent. local → synchronous warehouse stats; service → starts the
+    IDMC profiling job and returns ids for the frontend to poll."""
+    if req.mode == "local":
+        args = {"object_name": req.object_name}
+        if req.database:
+            args["database"] = req.database
+        if req.schema:
+            args["schema"] = req.schema
+        out = await _bridge(GOVERNANCE_ENGINE_URL, "compute_profile_from_snowflake", args)
+        if isinstance(out, dict):
+            out["profile_path"] = "snowflake_direct"
+        return out
+    # service path — asynchronous
+    conn = _env_value("IDMC_DQ_CONNECTION_ID")
+    rt = _env_value("IDMC_DQ_RUNTIME_ENV_ID")
+    if not conn or not rt:
+        raise HTTPException(422, "Informatica profiling needs IDMC_DQ_CONNECTION_ID and "
+                                 "IDMC_DQ_RUNTIME_ENV_ID in .env — or use 'Compute locally'.")
+    args = {"connection_id": conn, "object_name": req.object_name, "runtime_environment_id": rt}
+    try:
+        out = await _bridge(GOVERNANCE_ENGINE_URL, "run_profile", args)
+    except HTTPException as e:
+        # No existing profile definition → create one and auto-run it.
+        if e.status_code == 500 and "no profile" in str(e.detail).lower():
+            out = await _bridge(GOVERNANCE_ENGINE_URL, "create_profile", dict(args, auto_run=True))
+        else:
+            raise
+    if isinstance(out, dict):
+        out["profile_path"] = "informatica_service"
+    return out
+
+
+class ProfileSubRequest(BaseModel):
+    object_name: str
+    database: str | None = None
+    schema: str | None = None
+
+
+@app.post("/api/step/compute_profile_from_snowflake")
+async def step_compute_profile(req: ProfileSubRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    out = await _bridge(GOVERNANCE_ENGINE_URL, "compute_profile_from_snowflake", args)
+    if isinstance(out, dict):
+        out["profile_path"] = "snowflake_direct"
+    return out
+
+
+class ProfileRunRequest(BaseModel):
+    object_name: str
+
+
+@app.post("/api/step/create_profile")
+async def step_create_profile(req: ProfileRunRequest):
+    conn, rt = _env_value("IDMC_DQ_CONNECTION_ID"), _env_value("IDMC_DQ_RUNTIME_ENV_ID")
+    if not conn or not rt:
+        raise HTTPException(422, "Set IDMC_DQ_CONNECTION_ID and IDMC_DQ_RUNTIME_ENV_ID in .env.")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_profile", {
+        "connection_id": conn, "object_name": req.object_name,
+        "runtime_environment_id": rt, "auto_run": True})
+
+
+@app.post("/api/step/run_profile")
+async def step_run_profile(req: ProfileRunRequest):
+    conn, rt = _env_value("IDMC_DQ_CONNECTION_ID"), _env_value("IDMC_DQ_RUNTIME_ENV_ID")
+    if not conn or not rt:
+        raise HTTPException(422, "Set IDMC_DQ_CONNECTION_ID and IDMC_DQ_RUNTIME_ENV_ID in .env.")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "run_profile", {
+        "connection_id": conn, "object_name": req.object_name, "runtime_environment_id": rt})
+
+
+@app.post("/api/step/get_profile_results")
+async def step_get_profile_results(req: ProfileRunRequest):
+    out = await _bridge(GOVERNANCE_ENGINE_URL, "get_profile_results", {"object_name": req.object_name})
+    if isinstance(out, dict):
+        out["profile_path"] = "cdgc_catalog"
+    return out
+
+
+class ProfileJobStatusRequest(BaseModel):
+    job_id: str | None = None
+    profile_id: str | None = None
+    profile_name: str | None = None
+
+
+@app.post("/api/profile/job_status")
+async def profile_job_status(req: ProfileJobStatusRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not args:
+        raise HTTPException(422, "Pass at least one of job_id / profile_id / profile_name.")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "get_profile_results_direct", args)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 1 — step 7 Recommend Rules: pure reasoning over the step 3 profile,
+# read from the session store — never calls the profiling tools directly.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RecommendRulesRequest(BaseModel):
+    connection: str = ""
+    schema: str = ""
+    table: str
+    rule_name_prefix: str = "DQ"
 
 
 @app.post("/api/step/recommend_rules")
-async def step_recommend_rules_stub():
-    _stub_response("recommend_rules")
+async def step_recommend_rules(req: RecommendRulesRequest):
+    entry = _read_profile_state().get(_profile_key(req.connection, req.schema, req.table))
+    profile = (entry or {}).get("profile") or {}
+    if not profile.get("columns"):
+        raise HTTPException(422, "No profile found for this table — run Profile Data (step 3) first. "
+                                 "recommend_dq_rules is pure reasoning over a profile payload and "
+                                 "produces nothing useful from an empty one.")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "recommend_dq_rules", {
+        "profile_results":  {"total_rows": profile.get("total_rows", 0), "columns": profile.get("columns", {})},
+        "rule_name_prefix": req.rule_name_prefix,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 6 — step 7 rule library substeps
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RuleSpecsRequest(BaseModel):
+    top: int = 100
+    name_filter: str | None = None
+
+
+@app.post("/api/step/list_rule_specifications")
+async def step_list_rule_specifications(req: RuleSpecsRequest = RuleSpecsRequest()):
+    """Org rule specs + the seven local templates in examples/, labelled apart —
+    the templates prove the 'DQ rule template library' claim."""
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    out = await _bridge(GOVERNANCE_ENGINE_URL, "list_rule_specifications", args)
+    templates = []
+    for f in sorted((_REPO_ROOT / "examples").glob("*.json")):
+        if f.name == "profiling-rule-mapping.json":   # recommender config, not a template
+            continue
+        try:
+            j = json.loads(f.read_text())
+        except Exception:  # noqa: BLE001
+            continue
+        opts = {o.get("name"): o.get("optionValue") for o in j.get("options", [])}
+        templates.append({
+            "file":      f"examples/{f.name}",
+            "template":  f.stem,
+            "dimension": opts.get("DIMENSION"),
+            "fields":    [fl.get("name") for fl in j.get("fields", [])],
+            "source":    "local_template",
+        })
+    if isinstance(out, dict):
+        out["local_templates"] = templates
+    return out
+
+
+class CreateRuleRequest(BaseModel):
+    rule_name: str
+    description: str = ""
+    field_name: str = "Input"
+    dimension: str = "COMPLETENESS"
+    rule_template: str | None = None    # e.g. "examples/range-check.json"
+
+
+@app.post("/api/step/create_dq_rules")
+async def step_create_dq_rules(req: CreateRuleRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not args.get("description"):
+        args["description"] = f"Authored at the step 7 review gate ({req.dimension.lower()})"
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_dq_rules", args)
+
+
+class ValidateRuleRequest(BaseModel):
+    rule_template: str | None = None
+    field_name: str = "Input"
+    dimension: str = "COMPLETENESS"
+
+
+@app.post("/api/step/validate_rule")
+async def step_validate_rule(req: ValidateRuleRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GOVERNANCE_ENGINE_URL, "validate_rule", args)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 2 — step 9 Schedule Execution (governance_engine CDI tools)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ListTasksRequest(BaseModel):
+    top: int = 100
+    name_filter: str | None = None
 
 
 @app.post("/api/step/schedule_execution")
-async def step_schedule_execution_stub():
-    _stub_response("schedule_execution")
+async def step_schedule_execution(req: ListTasksRequest = ListTasksRequest()):
+    """Step 9 parent = list current mapping tasks (read-only; populates pickers)."""
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GOVERNANCE_ENGINE_URL, "list_mapping_tasks", args)
+
+
+@app.post("/api/step/list_mapping_tasks")
+async def step_list_mapping_tasks(req: ListTasksRequest = ListTasksRequest()):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GOVERNANCE_ENGINE_URL, "list_mapping_tasks", args)
+
+
+class CreateTaskRequest(BaseModel):
+    name: str
+    mapping_id: str
+    runtime_environment_id: str = ""
+    description: str = ""
+
+
+@app.post("/api/step/create_mapping_task")
+async def step_create_mapping_task(req: CreateTaskRequest):
+    rt = req.runtime_environment_id or _env_value("IDMC_DQ_RUNTIME_ENV_ID")
+    if not rt:
+        raise HTTPException(422, "runtime_environment_id required (or set IDMC_DQ_RUNTIME_ENV_ID in .env).")
+    args = req.model_dump()
+    args["runtime_environment_id"] = rt
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_mapping_task", args)
+
+
+class GenerateDQTaskRequest(BaseModel):
+    source_table: str
+    target_table: str = ""
+    rule_spec_id: str | None = None
+    task_name: str | None = None
+    input_field_mapping: str = ""
+
+
+@app.post("/api/step/generate_dq_mapping_task")
+async def step_generate_dq_task(req: GenerateDQTaskRequest):
+    conn = _env_value("IDMC_DQ_CONNECTION_ID")
+    rt   = _env_value("IDMC_DQ_RUNTIME_ENV_ID")
+    tmpl = _env_value("IDMC_DQ_TEMPLATE_MAPPING_ID")
+    if not tmpl:
+        # Missing M_DQ_Generic surfaces as setup guidance on load, not a run-time failure.
+        raise HTTPException(422, "M_DQ_Generic is not configured (IDMC_DQ_TEMPLATE_MAPPING_ID). "
+                                 "Build it per docs/IDMC_Console_Runbook.md, then set its id in .env.")
+    if not conn or not rt:
+        raise HTTPException(422, "Set IDMC_DQ_CONNECTION_ID and IDMC_DQ_RUNTIME_ENV_ID in .env.")
+    args = {
+        "source_connection_id":   conn,
+        "source_table":           req.source_table,
+        "target_connection_id":   conn,
+        "target_table":           req.target_table or f"{req.source_table}_BAD_RECORDS",
+        "runtime_environment_id": rt,
+        "template_mapping_id":    tmpl,
+        "input_field_mapping":    req.input_field_mapping,
+    }
+    if req.rule_spec_id:
+        args["rule_spec_id"] = req.rule_spec_id
+    if req.task_name:
+        args["task_name"] = req.task_name
+    return await _bridge(GOVERNANCE_ENGINE_URL, "generate_dq_mapping_task", args)
+
+
+# Malformed startTime is accepted by the schedule API and fails silently later —
+# validate and normalise to .000Z here.
+_START_TIME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?(?:Z)?$")
+_SCHEDULE_INTERVALS = {"None", "Minutely", "Hourly", "Daily", "Weekly", "Biweekly", "Monthly"}
+
+
+def _normalize_start_time(ts: str) -> str:
+    m = _START_TIME_RE.match((ts or "").strip())
+    if not m:
+        raise HTTPException(422, f"Invalid startTime '{ts}'. Use ISO-8601 UTC like 2026-07-24T09:00:00.000Z.")
+    date, hh, mm, ss, ms = m.groups()
+    return f"{date}T{hh}:{mm}:{ss or '00'}.{(ms or '0'):0<3}Z"
+
+
+class ScheduleCreateRequest(BaseModel):
+    name: str
+    start_time: str
+    interval: str = "Daily"
+    frequency: int | None = None
+    sun: bool = False
+    mon: bool = False
+    tue: bool = False
+    wed: bool = False
+    thu: bool = False
+    fri: bool = False
+    sat: bool = False
+    day_of_month: int | None = None
+
+
+@app.post("/api/step/create_schedule")
+async def step_create_schedule(req: ScheduleCreateRequest):
+    if req.interval not in _SCHEDULE_INTERVALS:
+        raise HTTPException(422, f"interval must be one of {sorted(_SCHEDULE_INTERVALS)}.")
+    start = _normalize_start_time(req.start_time)
+    args = {k: v for k, v in req.model_dump().items() if v is not None and v is not False}
+    args["start_time"] = start
+    args["start_time_utc"] = start
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_schedule", args)
+
+
+class TaskflowCreateRequest(BaseModel):
+    name: str
+    tasks: list[dict]            # [{taskId, type, name}]
+    description: str = ""
+
+
+@app.post("/api/step/create_linear_taskflow")
+async def step_create_taskflow(req: TaskflowCreateRequest):
+    if not req.tasks:
+        raise HTTPException(422, "A taskflow needs at least one task.")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_linear_taskflow", req.model_dump())
+
+
+class RunTaskRequest(BaseModel):
+    task_id: str
+    task_type: str = "MTT"
+
+
+@app.post("/api/step/run_task")
+async def step_run_task(req: RunTaskRequest):
+    return await _bridge(GOVERNANCE_ENGINE_URL, "run_task", req.model_dump())
+
+
+class JobStatusRequest(BaseModel):
+    run_id: int
+    task_id: str | None = None
+
+
+@app.post("/api/step/get_job_status")
+async def step_get_job_status(req: JobStatusRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GOVERNANCE_ENGINE_URL, "get_job_status", args)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -612,14 +943,45 @@ class TaxonomyRequest(BaseModel):
     table_names: list[str] = []   # scanned table names — loaded from cache server-side
     sample_tables: int = 0        # tables in the scanned sample (for time estimate)
     total_in_schema: int = 0      # full-schema table count (for time estimate)
+    # Step 3 profile identity — classification grounds in data, not column names.
+    connection: str = ""
+    schema: str = ""
+    table: str = ""
+
+
+def _compact_profile_stats(profile: dict) -> dict:
+    """Boil the step 3 profile down to per-column stats the LLM prompt can carry."""
+    out = {}
+    for name, st in list((profile.get("columns") or {}).items())[:40]:
+        if not isinstance(st, dict):
+            continue
+        row = {}
+        for k_src, k_dst in (("data_type", "type"), ("null_pct", "null_pct"),
+                             ("null_count", "nulls"), ("distinct_count", "distinct"),
+                             ("min_value", "min"), ("max_value", "max")):
+            if st.get(k_src) is not None:
+                row[k_dst] = st[k_src]
+        tv = (st.get("top_values") or [{}])[0]
+        if isinstance(tv, dict) and tv.get("value") is not None:
+            row["top"] = f"{str(tv['value'])[:24]} x{tv.get('count')}"
+        out[name] = row
+    return {"total_rows": profile.get("total_rows"), "columns": out}
+
 
 @app.post("/api/step/taxonomy")
 async def step_taxonomy(req: TaxonomyRequest = TaxonomyRequest()):
     try:
         t0 = _time.monotonic()
-        out = await _call(AI_GOVERNANCE_URL, "generate_governance_taxonomy", {
-            "table_names": req.table_names or [],
-        })
+        args: dict = {"table_names": req.table_names or []}
+        # Phase 1: send the step 3 profile with the column metadata so the LLM
+        # classifies on what the data contains, not what the column is called —
+        # the exact thing the Opella customer rejected.
+        if req.table:
+            entry = _read_profile_state().get(_profile_key(req.connection, req.schema, req.table))
+            profile = (entry or {}).get("profile") or {}
+            if profile.get("columns"):
+                args["profile_stats"] = _compact_profile_stats(profile)
+        out = await _call(AI_GOVERNANCE_URL, "generate_governance_taxonomy", args)
         out = dict(out) if isinstance(out, dict) else {"result": out}
         # Prefer the actual count of tables the tool processed (from the scan cache) —
         # the frontend's sample_tables can be 0 if the scan wasn't run this session.

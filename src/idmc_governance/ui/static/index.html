@@ -71,13 +71,12 @@ const STEPS = [
       { tool: "find_data_source",       key: "find_data_source",       route: "/api/step/find_data_source",       form: "source" },
     ] },
   { id: "profile", num: 3, label: "Profile Data", icon: "◍", route: "/api/step/profile",
-    stub: true, stubPhase: "Phase 1",
-    desc: "Measure what the data actually contains — null counts, distinct counts, min/max, patterns — per column. Steps 4 and 7 read this profile.",
+    desc: "Measure what the data actually contains — null counts, distinct counts, min/max, top values — per column. Runs once; steps 4 and 7 read the stored profile.",
     substeps: [
-      { tool: "create_profile",                 key: "create_profile",                 route: null, note: "Next release (Phase 1)" },
-      { tool: "run_profile",                    key: "run_profile",                    route: null, note: "Next release (Phase 1)" },
-      { tool: "get_profile_results",            key: "get_profile_results",            route: null, note: "Next release (Phase 1)" },
-      { tool: "compute_profile_from_snowflake", key: "compute_profile_from_snowflake", route: null, note: "Next release (Phase 1)" },
+      { tool: "create_profile",                 key: "create_profile",                 route: "/api/step/create_profile",                 form: "profileObj" },
+      { tool: "run_profile",                    key: "run_profile",                    route: "/api/step/run_profile",                    form: "profileObj" },
+      { tool: "get_profile_results",            key: "get_profile_results",            route: "/api/step/get_profile_results",            form: "profileObj" },
+      { tool: "compute_profile_from_snowflake", key: "compute_profile_from_snowflake", route: "/api/step/compute_profile_from_snowflake", form: "profileObj" },
     ] },
   { id: "taxonomy", num: 4, label: "Generate Taxonomy", icon: "◫", route: "/api/step/taxonomy",
     desc: "LLM generates a domain / subdomain / business-term tree from the scanned column metadata.",
@@ -97,13 +96,12 @@ const STEPS = [
       { tool: "create_glossary_term",    key: "create_glossary_term",    route: "/api/step/create_glossary_term",    form: "term" },
       { tool: "detect_glossary_issues",  key: "detect_glossary_issues",  route: "/api/step/detect_glossary_issues",  form: "health" },
     ] },
-  { id: "recommend_rules", num: 7, label: "Recommend Rules", icon: "❋", route: "/api/step/recommend_rules",
-    stub: true, stubPhase: "Phase 1", gate: true,
-    desc: "Evidence-backed DQ rule recommendations from the step 3 profile, reviewed and approved before anything is created.",
+  { id: "recommend_rules", num: 7, label: "Recommend Rules", icon: "❋", route: "/api/step/recommend_rules", gate: true,
+    desc: "Evidence-backed DQ rule recommendations from the step 3 profile, reviewed at a gate. Approving pushes the selection into step 8; rules authored here join it.",
     substeps: [
-      { tool: "create_dq_rules",          key: "create_dq_rules",          route: null, note: "Next release (Phase 6)" },
-      { tool: "validate_rule",            key: "validate_rule",            route: null, note: "Next release (Phase 6)" },
-      { tool: "list_rule_specifications", key: "list_rule_specifications", route: null, note: "Next release (Phase 6)" },
+      { tool: "create_dq_rules",          key: "create_dq_rules",          route: "/api/step/create_dq_rules",          form: "rule" },
+      { tool: "validate_rule",            key: "validate_rule",            route: "/api/step/validate_rule",            form: "ruleValidate" },
+      { tool: "list_rule_specifications", key: "list_rule_specifications", route: "/api/step/list_rule_specifications" },
     ] },
   { id: "data_quality", num: 8, label: "Create DQ Rules", icon: "◎", route: "/api/step/dq_rules",
     desc: "Creates templated DQ rule specifications and registers their rule occurrences in CDGC.",
@@ -112,16 +110,15 @@ const STEPS = [
       { tool: "set_dq_occurrences",      key: "set_dq_occurrences", route: null, note: "Runs as part of Create rules — separate execution pending." },
     ] },
   { id: "schedule_execution", num: 9, label: "Schedule Execution", icon: "▸", route: "/api/step/schedule_execution",
-    stub: true, stubPhase: "Phase 2",
-    desc: "CDI execution — mapping tasks, schedules, taskflows, and live job monitoring.",
+    desc: "CDI execution — mapping tasks bound to M_DQ_Generic, schedules, taskflows, and live job monitoring. Run Step lists the org's mapping tasks.",
     substeps: [
-      { tool: "list_mapping_tasks",       key: "list_mapping_tasks",       route: null, note: "Next release (Phase 2)" },
-      { tool: "create_mapping_task",      key: "create_mapping_task",      route: null, note: "Next release (Phase 2)" },
-      { tool: "generate_dq_mapping_task", key: "generate_dq_mapping_task", route: null, note: "Next release (Phase 2)" },
-      { tool: "create_schedule",          key: "create_schedule",          route: null, note: "Next release (Phase 2)" },
-      { tool: "create_linear_taskflow",   key: "create_linear_taskflow",   route: null, note: "Next release (Phase 2)" },
-      { tool: "run_task",                 key: "run_task",                 route: null, note: "Next release (Phase 2)" },
-      { tool: "get_job_status",           key: "get_job_status",           route: null, note: "Next release (Phase 2)" },
+      { tool: "list_mapping_tasks",       key: "list_mapping_tasks",       parent: true },
+      { tool: "create_mapping_task",      key: "create_mapping_task",      route: "/api/step/create_mapping_task",      form: "mtask" },
+      { tool: "generate_dq_mapping_task", key: "generate_dq_mapping_task", route: "/api/step/generate_dq_mapping_task", form: "dqtask" },
+      { tool: "create_schedule",          key: "create_schedule",          route: "/api/step/create_schedule",          form: "schedule" },
+      { tool: "create_linear_taskflow",   key: "create_linear_taskflow",   route: "/api/step/create_linear_taskflow",   form: "taskflow" },
+      { tool: "run_task",                 key: "run_task",                 route: "/api/step/run_task",                 form: "runtask" },
+      { tool: "get_job_status",           key: "get_job_status",           route: "/api/step/get_job_status",           form: "jobstatus" },
     ] },
   { id: "publish_governance", num: 10, label: "Publish to Catalog", icon: "◉", route: "/api/step/mcc_scan",
     desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data (5000 rows) and publish real DQ scores to the Governance Catalog.",
@@ -516,9 +513,15 @@ function EstimateBanner({ data }) {
 function TaxonomyResult({ data }) {
   const domains = data?.domains || data?.result?.domains || [];
   const s = data?._summary || data?.result?._summary || {};
+  const grounded = domains.some(d => (d.subdomains || []).some(sd => (sd.business_terms || []).some(bt => bt.evidence)));
   return (
     <div className="space-y-4">
       <EstimateBanner data={data} />
+      {grounded && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
+          Classifications grounded in the step 3 profile — the domain assignment came from the data, not from column names. Evidence shown per term.
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-3">
         <SummaryCard label="Domains"    value={s.domain_count || domains.length}/>
         <SummaryCard label="Subdomains" value={s.subdomain_count || "—"}/>
@@ -532,9 +535,16 @@ function TaxonomyResult({ data }) {
               <div className="text-xs text-slate-600 font-semibold mb-1">◧ {sd.name}</div>
               <div className="flex flex-wrap gap-1.5 ml-3">
                 {(sd.business_terms || []).map(bt => (
-                  <span key={bt.name} className="text-xs bg-slate-50 border border-slate-300 text-slate-600 px-2 py-0.5 rounded shadow-sm max-w-[200px] truncate inline-block" title={bt.name}>{bt.name}</span>
+                  <span key={bt.name} className="text-xs bg-slate-50 border border-slate-300 text-slate-600 px-2 py-0.5 rounded shadow-sm max-w-[200px] truncate inline-block" title={bt.evidence || bt.name}>{bt.name}</span>
                 ))}
               </div>
+              {(sd.business_terms || []).some(bt => bt.evidence) && (
+                <div className="ml-3 mt-1.5 space-y-0.5">
+                  {(sd.business_terms || []).filter(bt => bt.evidence).slice(0, 8).map(bt => (
+                    <div key={bt.name + "-ev"} className="text-xs text-slate-400">◍ <span className="font-medium text-slate-500">{bt.name}</span>: {bt.evidence}</div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -721,8 +731,12 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
   );
 }
 
-function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelectAll, onDeselectAll, onApprove, onRename, approving }) {
-  const groups = [
+// The reference implementation for EVERY gate — reused with different grouping
+// and row content via props, never rebuilt. A second approval component
+// anywhere in this codebase is a defect.
+function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelectAll, onDeselectAll, onApprove, onRename, approving,
+                               groups: groupsProp, banner, approveLabel, busyLabel }) {
+  const groups = groupsProp || [
     { type: "Domain",       label: "Domains",          color: "text-violet-600",  bg: "bg-violet-50",  border: "border-violet-200" },
     { type: "SubDomain",    label: "Sub-Domains",       color: "text-indigo-600",  bg: "bg-indigo-50",  border: "border-indigo-200" },
     { type: "BusinessTerm", label: "Business Terms",    color: "text-slate-700",   bg: "bg-slate-50",   border: "border-slate-200"  },
@@ -746,8 +760,8 @@ function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelec
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3">
         <span className="text-lg">✋</span>
         <div>
-          <div className="text-sm font-semibold text-amber-800">Review before creating in CDGC</div>
-          <div className="text-xs text-amber-600">Deselect any items you don't want. Click a name to rename it.</div>
+          <div className="text-sm font-semibold text-amber-800">{(banner && banner.title) || "Review before creating in CDGC"}</div>
+          <div className="text-xs text-amber-600">{(banner && banner.body) || "Deselect any items you don't want. Click a name to rename it."}</div>
         </div>
       </div>
 
@@ -791,22 +805,28 @@ function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelec
                       onChange={() => onToggle(item.name)}
                       className="accent-violet-600 cursor-pointer w-3.5 h-3.5 shrink-0"
                     />
-                    <div className="flex-1 min-w-0 flex items-center gap-2">
-                      {isEditing ? (
-                        <input
-                          autoFocus
-                          value={editValue}
-                          onChange={e => setEditValue(e.target.value)}
-                          onBlur={() => commitEdit(item.name)}
-                          onKeyDown={e => { if (e.key === "Enter") commitEdit(item.name); if (e.key === "Escape") setEditingName(null); }}
-                          onClick={e => e.stopPropagation()}
-                          className="flex-1 border border-violet-300 rounded px-2 py-0.5 text-sm font-medium text-slate-800 outline-none bg-white shadow-inner"
-                        />
-                      ) : (
-                        <span className="text-sm font-medium text-slate-700 break-words">{item.name}</span>
-                      )}
-                      {item.parent && !isEditing && (
-                        <span className="shrink-0 text-xs bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded font-normal truncate max-w-[120px]" title={item.parent}>{item.parent}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            value={editValue}
+                            onChange={e => setEditValue(e.target.value)}
+                            onBlur={() => commitEdit(item.name)}
+                            onKeyDown={e => { if (e.key === "Enter") commitEdit(item.name); if (e.key === "Escape") setEditingName(null); }}
+                            onClick={e => e.stopPropagation()}
+                            className="flex-1 border border-violet-300 rounded px-2 py-0.5 text-sm font-medium text-slate-800 outline-none bg-white shadow-inner"
+                          />
+                        ) : (
+                          <span className="text-sm font-medium text-slate-700 break-words">{item.name}</span>
+                        )}
+                        {item.parent && !isEditing && (
+                          <span className="shrink-0 text-xs bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded font-normal truncate max-w-[120px]" title={item.parent}>{item.parent}</span>
+                        )}
+                      </div>
+                      {/* Gate 3 rows carry profiling evidence as secondary text */}
+                      {item.subtitle && !isEditing && (
+                        <div className="text-xs text-slate-400 mt-0.5">{item.subtitle}</div>
                       )}
                     </div>
                     <button
@@ -830,7 +850,7 @@ function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelec
             ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200"
             : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-md shadow-emerald-100 hover:shadow-emerald-200"}`}
       >
-        {approving ? <><Spinner/> Creating in CDGC…</> : <>✓ Approve &amp; Create ({selected.size} items)</>}
+        {approving ? <><Spinner/> {busyLabel || "Creating in CDGC…"}</> : <>✓ {approveLabel || "Approve & Create"} ({selected.size} items)</>}
       </button>
     </div>
   );
@@ -2032,6 +2052,222 @@ function AlertResult({ data }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Day-3 renderers (Phases 1, 6, 2)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function ProfileResult({ data }) {
+  const cols = data?.columns || {};
+  const names = Object.keys(cols);
+  const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally — direct Snowflake query"
+                  : data?.profile_path === "cdgc_catalog"     ? "Informatica profiling service (read from CDGC)"
+                  : "Informatica profiling service";
+  return (
+    <div className="space-y-4">
+      {data?._cached && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
+          Profiled {data._saved_at ? `at ${data._saved_at}` : "earlier this session"} — cached, not re-executed. Run Step to refresh.
+        </div>
+      )}
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Rows profiled" value={(data?.total_rows ?? 0).toLocaleString ? (data?.total_rows ?? 0).toLocaleString() : (data?.total_rows ?? "—")}/>
+        <SummaryCard label="Columns" value={names.length}/>
+        <SummaryCard label="Statistics path" value={data?.profile_path === "snowflake_direct" ? "Snowflake direct" : "IDMC service"} color="text-slate-600"/>
+      </div>
+      {/* The two paths have different fidelity — always say which produced the numbers */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">{pathLabel}</div>
+      {names.length > 0 ? (
+        <DataTable
+          columns={[
+            { key: "name",     label: "Column",   render: r => <span className="font-mono font-semibold">{r.name}</span> },
+            { key: "type",     label: "Type",     render: r => <span className="text-slate-500">{r.stats.data_type || "—"}</span> },
+            { key: "nulls",    label: "Nulls",    render: r => {
+                const pct = r.stats.null_pct;
+                const bad = Number(pct) > (Number(pct) <= 1 ? 0.1 : 10);
+                return <span className={bad ? "text-red-600 font-semibold" : ""}>{r.stats.null_count ?? "—"} ({fmtPct(pct)})</span>;
+              } },
+            { key: "distinct", label: "Distinct", render: r => r.stats.distinct_count ?? "—" },
+            { key: "min",      label: "Min",      render: r => <span className="font-mono">{String(r.stats.min_value ?? "—").slice(0, 24)}</span> },
+            { key: "max",      label: "Max",      render: r => <span className="font-mono">{String(r.stats.max_value ?? "—").slice(0, 24)}</span> },
+            { key: "top",      label: "Top value", render: r => {
+                const tv = (r.stats.top_values || [])[0];
+                return tv ? <span className="font-mono">{String(tv.value).slice(0, 20)} ×{tv.count}</span> : "—";
+              } },
+          ]}
+          rows={names.map(n => ({ name: n, stats: cols[n] || {} }))}
+        />
+      ) : (
+        <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">
+          No column statistics returned — the connector may not enumerate columns through the profiling
+          service, or CDGC hasn't ingested the run yet (statistics propagate a few minutes after the job).
+          "Compute locally" queries the warehouse directly and returns immediately.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecommendRulesResult({ data }) {
+  const approved = data?.approved || [];
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Recommendations" value={data?.recommendation_count ?? 0}/>
+        <SummaryCard label="Approved for step 8" value={approved.length} color="text-emerald-600"/>
+      </div>
+      {approved.length === 0
+        ? <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">Nothing approved — re-run the step to reopen the review gate.</div>
+        : (
+          <div className="border border-slate-200 rounded-xl bg-white divide-y divide-slate-100 overflow-hidden">
+            {approved.map((r, i) => (
+              <div key={i} className="px-4 py-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-mono font-semibold text-slate-800">{r.name}</span>
+                  <DimChip dim={r.dimension}/>
+                </div>
+                {r.evidence && <div className="text-xs text-slate-400 mt-0.5">{r.evidence}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">
+        Approved selection is carried into Create DQ Rules (step 8) — one approval record covers everything written.
+      </div>
+    </div>
+  );
+}
+
+function RuleSpecsResult({ data }) {
+  const rules = data?.rules || [];
+  const templates = data?.local_templates || [];
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Rules in this org" value={data?.count ?? rules.length}/>
+        <SummaryCard label="Local templates" value={templates.length} color="text-slate-600"/>
+      </div>
+      <DataTable
+        columns={[
+          { key: "name", label: "Rule", render: r => <span className="font-mono font-medium">{r.name}</span> },
+          { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
+          { key: "description", label: "Description", render: r => <span className="text-slate-500">{(r.description || "—").slice(0, 60)}</span> },
+          { key: "lastUpdatedTime", label: "Updated" },
+        ]}
+        rows={rules}
+      />
+      {templates.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Template library — local JSON, not org objects</div>
+          <div className="flex flex-wrap gap-2">
+            {templates.map(t => (
+              <span key={t.file} className="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-lg">
+                <span className="font-mono font-semibold">{t.template}</span> · {t.dimension} <span className="text-slate-400">(local template)</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateRuleResult({ data }) {
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
+      <div>✓ Rule <strong>{data?.name}</strong> created — state <span className="font-mono">{data?.documentState}</span> · dimension {data?.dimension}</div>
+      {data?.ui_url && <a href={data.ui_url} target="_blank" rel="noreferrer" className="text-brand underline">Open in CDQ ↗</a>}
+      <div className="text-emerald-700">Added to the step 7 selection — it is approved with the rest.</div>
+    </div>
+  );
+}
+
+function ValidateRuleResult({ data }) {
+  return data?.valid
+    ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ Rule logic is valid — safe to deploy</div>
+    : (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+        <div className="text-sm font-semibold text-red-700">✗ Validation failed</div>
+        {data?.raw?.error && <pre className="text-xs text-red-600 whitespace-pre-wrap">{String(data.raw.error).slice(0, 300)}</pre>}
+      </div>
+    );
+}
+
+// ── Phase 2 renderers ─────────────────────────────────────────────────────────
+
+const JOB_TERMINAL = new Set(["SUCCESS", "FAILED", "WARNING", "STOPPED"]);
+
+function JobStateChip({ label }) {
+  const l = (label || "").toUpperCase();
+  const cls = l === "SUCCESS" ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+            : l === "FAILED"  ? "bg-red-100 text-red-700 border-red-300"
+            : l === "WARNING" ? "bg-amber-100 text-amber-700 border-amber-300"
+            : l === "STOPPED" ? "bg-slate-200 text-slate-600 border-slate-300"
+            :                   "bg-indigo-100 text-indigo-700 border-indigo-300";
+  const running = !JOB_TERMINAL.has(l);
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-semibold ${cls}`}>
+      {running && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 pulse inline-block"/>}
+      {label || "…"}
+    </span>
+  );
+}
+
+function MappingTasksResult({ data }) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Mapping tasks" value={data?.count ?? 0}/>
+        <SummaryCard label="Total in org" value={data?.total ?? 0} color="text-slate-600"/>
+      </div>
+      <DataTable
+        columns={[
+          { key: "name", label: "Name", render: r => <span className="font-medium">{r.name}</span> },
+          { key: "id", label: "Task ID", render: r => <span className="font-mono text-slate-500">{r.id}</span> },
+          { key: "scheduleId", label: "Schedule", render: r => r.scheduleId ? <span className="text-emerald-600 font-medium">scheduled</span> : <span className="text-slate-400">—</span> },
+          { key: "updateTime", label: "Updated" },
+        ]}
+        rows={data?.tasks || []}
+        empty={<div className="text-xs text-slate-400 italic p-3">No mapping tasks in this org yet — create one below.</div>}
+      />
+    </div>
+  );
+}
+
+function GeneratedTaskResult({ data }) {
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+      ✓ Task <strong>{data?.name}</strong> created (id <span className="font-mono">{data?.id}</span>) —
+      bound: {(data?.parameter_names || []).join(", ") || "template defaults"}
+    </div>
+  );
+}
+
+function ScheduleCreatedResult({ data }) {
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
+      <div>✓ Schedule <strong>{data?.name}</strong> — {data?.interval}{data?.frequency ? ` (every ${data.frequency})` : ""}</div>
+      <div className="font-mono text-emerald-700">id {data?.id} · first run {data?.startTime}</div>
+      <div className="text-emerald-600">Attach it to a mapping task, or reference it from a taskflow.</div>
+    </div>
+  );
+}
+
+function TaskflowCreatedResult({ data }) {
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+      ✓ Taskflow <strong>{data?.name}</strong> created — {data?.taskCount} task{data?.taskCount === 1 ? "" : "s"}, id <span className="font-mono">{data?.id}</span>
+    </div>
+  );
+}
+
+function RunTaskResult({ data }) {
+  return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-700">
+      ▶ Run <span className="font-mono font-semibold">{data?.runId}</span> triggered for <strong>{data?.taskName || data?.taskId}</strong> — live status in the Job runs panel below.
+    </div>
+  );
+}
+
 const RESULT_RENDERERS = {
   discover:           DiscoverResult,
   scan:               ScanResult,
@@ -2045,6 +2281,9 @@ const RESULT_RENDERERS = {
   configure_delivery:  ConfigureDeliveryResult,
   consumer_access:     ConsumerAccessResult,
   monitor_quality:     ScorecardResult,
+  profile:             ProfileResult,
+  recommend_rules:     RecommendRulesResult,
+  schedule_execution:  MappingTasksResult,
 };
 
 // Renderers for substep results that live outside a composite parent map.
@@ -2063,6 +2302,18 @@ const SUB_RENDERERS = {
   check_score_trends:       TrendsResult,
   recommend_remediation:    RemediationResult,
   alert_on_degradation:     AlertResult,
+  create_profile:                 ProfileResult,
+  run_profile:                    null,   // job-start payload — JSON fallback
+  get_profile_results:            ProfileResult,
+  compute_profile_from_snowflake: ProfileResult,
+  list_rule_specifications:  RuleSpecsResult,
+  create_dq_rules:           CreateRuleResult,
+  validate_rule:             ValidateRuleResult,
+  create_mapping_task:       GeneratedTaskResult,
+  generate_dq_mapping_task:  GeneratedTaskResult,
+  create_schedule:           ScheduleCreatedResult,
+  create_linear_taskflow:    TaskflowCreatedResult,
+  run_task:                  RunTaskResult,
 };
 
 function SessionExpiredBanner({ message, onDismiss }) {
@@ -2174,7 +2425,72 @@ function App() {
   const [glossForm, setGlossForm] = useState({ asset_name: "", domain_context: "", term_name: "", definition: "", category: "", synonyms: "", scan_scope: "all" });
   // Step 11 monitor (Phase 3) — entered cold; free text is the primary selector
   const [monitorForm, setMonitorForm] = useState({ asset_name: "", lookback_days: "30", threshold: "10", notify_email: "" });
+  // Step 3 (Phase 1): profile once, cache, two consumers
+  const [profileObject, setProfileObject] = useState(_saved?.profileObject || "");
+  const [profileMode, setProfileMode] = useState(_saved?.profileMode || "local");
+  // Step 7 (Phase 1): Gate 3 state + approved selection carried into step 8
+  const [recItems, setRecItems] = useState([]);
+  const [recSelected, setRecSelected] = useState(new Set());
+  const [approvedRecs, setApprovedRecs] = useState(_saved?.approvedRecs || []);
+  // Step 7 rule authoring (Phase 6)
+  const [ruleForm, setRuleForm] = useState({ rule_name: "", description: "", dimension: "COMPLETENESS", rule_template: "" });
+  const [ruleTemplates, setRuleTemplates] = useState([]);
+  const [orgRules, setOrgRules] = useState([]);
+  // Step 9 (Phase 2)
+  const [dqTaskForm, setDqTaskForm] = useState({ source_table: "", rule_spec_id: "", task_name: "" });
+  const [mtaskForm, setMtaskForm] = useState({ name: "", mapping_id: "" });
+  const [scheduleForm, setScheduleForm] = useState({ name: "", interval: "Daily", startLocal: "", frequency: "", day_of_month: "" });
+  const [taskflowForm, setTaskflowForm] = useState({ name: "", picked: [] });
+  const [runTaskId, setRunTaskId] = useState("");
+  const [jobRuns, setJobRuns] = useState([]);
+  const [config, setConfig] = useState(null);
   const [sessionExpired, setSessionExpired] = useState(null);
+
+  useEffect(() => { fetch("/api/config").then(r => r.json()).then(setConfig).catch(() => {}); }, []);
+
+  // Rule pickers (steps 7 and 9) — load org rules + local templates on first entry.
+  useEffect(() => {
+    if ((activeStep === "recommend_rules" || activeStep === "schedule_execution") && !orgRules.length && !ruleTemplates.length) {
+      apiPost("/api/step/list_rule_specifications", {})
+        .then(d => { setOrgRules(d.rules || []); setRuleTemplates(d.local_templates || []); })
+        .catch(() => {});
+    }
+  }, [activeStep]);
+
+  // Step 3 cache-hit: show the stored profile rather than silently re-executing
+  // a multi-minute run.
+  useEffect(() => {
+    if (activeStep !== "profile") return;
+    const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+    const obj = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scanned[0] || "";
+    if (!obj || resultsRef.current.profile) return;
+    fetch(`/api/profile_state?connection=${encodeURIComponent(scanSource || "")}&schema=${encodeURIComponent(scanSchema || "")}&table=${encodeURIComponent(obj)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.found && d.entry?.profile && !resultsRef.current.profile) {
+          setResults(prev => prev.profile ? prev : ({ ...prev, profile: { ...d.entry.profile, _cached: true, _saved_at: d.entry.saved_at, object_name: obj } }));
+          setStatuses(prev => ({ ...prev, profile: prev.profile || STATUS.done }));
+        }
+      })
+      .catch(() => {});
+  }, [activeStep]);
+
+  // Step 9 live job monitoring — poll the activity monitor while any run is live;
+  // an empty monitor response is not failure (the job may have moved to the log).
+  useEffect(() => {
+    const live = jobRuns.some(r => !JOB_TERMINAL.has((r.state_label || "").toUpperCase()));
+    if (!live) return;
+    const iv = setInterval(async () => {
+      for (const r of jobRuns.filter(x => !JOB_TERMINAL.has((x.state_label || "").toUpperCase()))) {
+        try {
+          const st = await apiPost("/api/step/get_job_status", { run_id: r.runId, task_id: r.taskId });
+          const entry = st.first || (st.entries || [])[0];
+          if (entry) setJobRuns(prev => prev.map(p => p.runId === r.runId ? { ...p, entry, state_label: entry.state_label } : p));
+        } catch (e) {}
+      }
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [jobRuns]);
 
   // Always-fresh results for derivations inside async callbacks.
   const resultsRef = useRef(results);
@@ -2188,9 +2504,9 @@ function App() {
   // Persist key state to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, approvedRecs }));
     } catch {}
-  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource]);
+  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, approvedRecs]);
 
   const discoverTables    = results.discover?.result?.tables_for_selection || [];
   const discoverSources   = results.discover?.result?.catalog_sources_grouped || [];
@@ -2291,6 +2607,51 @@ function App() {
       body = { asset_name: monitorForm.asset_name, threshold: parseFloat(monitorForm.threshold),
                notify_email: monitorForm.notify_email, lookback_days: parseInt(monitorForm.lookback_days, 10) || 30 };
     }
+    else if (ss.form === "profileObj") {
+      const obj = profileObject || defaultAsset;
+      if (!obj) return;
+      body = { object_name: obj };
+    }
+    else if (ss.form === "rule") {
+      if (!ruleForm.rule_name) return;
+      body = { rule_name: ruleForm.rule_name, description: ruleForm.description, dimension: ruleForm.dimension };
+      if (ruleForm.rule_template) body.rule_template = ruleForm.rule_template;
+    }
+    else if (ss.form === "ruleValidate") {
+      body = { dimension: ruleForm.dimension };
+      if (ruleForm.rule_template) body.rule_template = ruleForm.rule_template;
+    }
+    else if (ss.form === "mtask") {
+      if (!mtaskForm.name || !mtaskForm.mapping_id) return;
+      body = { name: mtaskForm.name, mapping_id: mtaskForm.mapping_id };
+    }
+    else if (ss.form === "dqtask") {
+      if (!dqTaskForm.source_table) return;
+      body = { source_table: dqTaskForm.source_table };
+      if (dqTaskForm.rule_spec_id) body.rule_spec_id = dqTaskForm.rule_spec_id;
+      if (dqTaskForm.task_name) body.task_name = dqTaskForm.task_name;
+    }
+    else if (ss.form === "schedule") {
+      if (!scheduleForm.name || !scheduleForm.startLocal) return;
+      body = { name: scheduleForm.name, interval: scheduleForm.interval,
+               start_time: new Date(scheduleForm.startLocal).toISOString() };   // always .000Z
+      if (scheduleForm.frequency) body.frequency = parseInt(scheduleForm.frequency, 10);
+      if (scheduleForm.interval === "Monthly" && scheduleForm.day_of_month) body.day_of_month = parseInt(scheduleForm.day_of_month, 10);
+    }
+    else if (ss.form === "taskflow") {
+      if (!taskflowForm.name || !taskflowForm.picked.length) return;
+      const tasks = (resultsRef.current.schedule_execution?.tasks || []);
+      body = { name: taskflowForm.name,
+               tasks: taskflowForm.picked.map(id => ({ taskId: id, type: "MTT", name: (tasks.find(t => t.id === id) || {}).name || id })) };
+    }
+    else if (ss.form === "runtask") {
+      if (!runTaskId) return;
+      body = { task_id: runTaskId };
+    }
+    else if (ss.form === "jobstatus") {
+      if (!jobRuns.length) return;
+      body = { run_id: jobRuns[0].runId, task_id: jobRuns[0].taskId };
+    }
     setSubRunning(prev => ({ ...prev, [ss.key]: true }));
     setErrors(prev => ({ ...prev, [step.id]: null }));
     // Requirement 7: after an individual run on a composite step, the dot is
@@ -2308,13 +2669,26 @@ function App() {
       }
     };
     try {
-      settle(await apiPost(ss.route, body));
+      const data = await apiPost(ss.route, body);
+      settle(data);
+      // A rule authored at the gate joins the selection and is approved with the rest.
+      if (ss.key === "create_dq_rules" && data?.id) {
+        setRecItems(prev => prev.length
+          ? [...prev, { type: data.dimension || ruleForm.dimension, name: data.name,
+                        subtitle: "authored manually — already in CDQ (" + (data.documentState || "?") + ")" }]
+          : prev);
+        setRecSelected(prev => { const n = new Set(prev); n.add(data.name); return n; });
+      }
+      // A triggered run joins the live monitoring panel.
+      if (ss.key === "run_task" && data?.runId) {
+        setJobRuns(prev => [{ runId: data.runId, taskId: body.task_id, taskName: data.taskName || body.task_id, entry: null, state_label: "QUEUED" }, ...prev]);
+      }
     } catch(e) {
       settle({ status: "failed", error: e.message });
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
-  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable]);
+  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, profileObject, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns]);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -2370,15 +2744,78 @@ function App() {
           total_tables_in_schema: totalInSchema,
         }, sig);
       }
+      else if (stepId === "profile") {
+        const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+        const objName = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scanned[0] || "";
+        if (!objName) throw new Error("Pick a table to profile — scan one first, or type a name above.");
+        if (profileMode === "local") {
+          data = await apiPost("/api/step/profile", { object_name: objName, mode: "local" }, sig);
+        } else {
+          // Asynchronous: start the IDMC job, poll it, then read stats from CDGC.
+          const exec = await apiPost("/api/step/profile", { object_name: objName, mode: "service" }, sig);
+          const jobId = exec.profile_job_id;
+          if (jobId) {
+            for (let i = 0; i < 40; i++) {
+              if (sig.aborted) { const e = new Error("aborted"); e.name = "AbortError"; throw e; }
+              await new Promise(r => setTimeout(r, 6000));
+              try {
+                const st = await apiPost("/api/profile/job_status", { job_id: jobId }, sig);
+                const s = String(st.job?.status || "").toUpperCase();
+                if (["COMPLETE", "SUCCESS", "FINISH"].some(x => s.includes(x))) break;
+                if (["FAILED", "ERROR", "CANCEL"].some(x => s.includes(x))) {
+                  throw new Error(`Profiling job ${s}: ${st.job?.errorMessage || "see IDMC monitor"}`);
+                }
+              } catch (pe) {
+                if (pe.name === "AbortError" || /Profiling job/.test(pe.message)) throw pe;
+              }
+            }
+          }
+          data = await apiPost("/api/step/get_profile_results", { object_name: objName }, sig);
+        }
+        data.object_name = objName;
+        // Persist to the session store — steps 4 and 7 read from here, never
+        // from the profiling tools directly.
+        try {
+          await apiPost("/api/profile_state", { connection: scanSource || "", schema: scanSchema || "", table: objName, profile: data });
+        } catch (e) {}
+      }
       else if (stepId === "taxonomy") {
         // Collect scanned table names from the scan result columns
         const scannedCols = results.scan?.columns || [];
         const scannedNames = scannedCols.map(c => c?.table).filter(Boolean);
+        const profObj = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scannedNames[0] || "";
         data = await apiPost("/api/step/taxonomy", {
           table_names: scannedNames,
           sample_tables: estBasis.sample, total_in_schema: estBasis.total,
+          // Step 3 profile identity — grounds classification in the data.
+          connection: scanSource || "", schema: scanSchema || "", table: profObj,
         }, sig);
       }
+      else if (stepId === "recommend_rules") {
+        const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+        const profObj = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scanned[0] || "";
+        const out = await apiPost("/api/step/recommend_rules", {
+          connection: scanSource || "", schema: scanSchema || "", table: profObj,
+        }, sig);
+        const recs = out.recommendations || [];
+        // Open Gate 3: dimension-grouped review; approving pushes into step 8.
+        const items = recs.map((r, i) => ({
+          type: r.dimension || "OTHER",
+          name: r.suggested_rule_name || `${r.column_name}-${r.dimension}-${i}`,
+          parent: r.column_name,
+          subtitle: r.rationale,
+        }));
+        setRecItems(items);
+        setRecSelected(new Set(items.map(it => it.name)));
+        abortRef.current = null;
+        setStatus(stepId, STATUS.idle);
+        if (!items.length) {
+          setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: 0, approved: [] } }));
+          setStatus(stepId, STATUS.done);
+        }
+        return;
+      }
+      else if (stepId === "schedule_execution") data = await apiPost("/api/step/schedule_execution", {}, sig);
       else if (stepId === "domain_structure") {
         const preview = await apiPost("/api/step/domain_structure/preview", {
           sample_tables: estBasis.sample, total_in_schema: estBasis.total,
@@ -2441,7 +2878,17 @@ function App() {
       setErrors(prev => ({ ...prev, [stepId]: err.message }));
       setStatus(stepId, STATUS.error);
     }
-  }, [scanTable, scanSchema, scanSource, monitorForm]);
+  }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode]);
+
+  // Gate 3 approve: pushes the selection into step 8 — writes nothing to CDGC here.
+  const approveRecommendations = useCallback(() => {
+    const approved = recItems.filter(i => recSelected.has(i.name))
+      .map(i => ({ name: i.name, dimension: i.type, column: i.parent, evidence: i.subtitle }));
+    setApprovedRecs(approved);
+    setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: recItems.length, approved } }));
+    setStatus("recommend_rules", STATUS.done);
+    setRecItems([]);
+  }, [recItems, recSelected]);
 
   const approveDomainStructure = useCallback(async () => {
     setDomainApproving(true);
@@ -2582,14 +3029,20 @@ function App() {
   // run before Step 3 has produced a taxonomy for the selected table, or it silently
   // writes nothing. Taxonomy status persists in localStorage across reloads.
   const taxonomyReady = statuses["taxonomy"] === STATUS.done || !!results.taxonomy;
+  // Steps 4 and 7 read the step 3 profile — they must not proceed on column names.
+  const profileReady = statuses["profile"] === STATUS.done || !!results.profile;
+  const _scannedTables = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
+  const defaultAsset = (scanTable && scanTable !== "__ALL__" ? scanTable : "") || _scannedTables[0] || "";
+  const profileObjectEffective = profileObject || defaultAsset;
   const canRun = (activeStep !== "scan" || (scanSchema && scanTable))
               && (activeStep !== "marketplace" || marketplaceCollectionId)
               && (activeStep !== "monitor_quality" || !!monitorForm.asset_name)
+              && (activeStep !== "profile" || !!profileObjectEffective)
+              && (activeStep !== "taxonomy" || profileReady)
+              && (activeStep !== "recommend_rules" || profileReady)
               && (activeStep !== "domain_structure" || taxonomyReady);
 
   // Which substep forms are missing required inputs (disables their buttons).
-  const _scannedTables = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
-  const defaultAsset = (scanTable && scanTable !== "__ALL__" ? scanTable : "") || _scannedTables[0] || "";
   const formIncomplete = (ss) => {
     switch (ss.form) {
       case "propagate":   return !propagateForm.asset_name || propagateForm.score === "";
@@ -2598,6 +3051,15 @@ function App() {
       case "term":        return !glossForm.term_name || !glossForm.definition;
       case "trends": case "remediation": return !monitorForm.asset_name;
       case "alert":       return !monitorForm.asset_name || !monitorForm.threshold || !monitorForm.notify_email;
+      case "profileObj":  return !profileObjectEffective;
+      case "rule":        return !ruleForm.rule_name;
+      case "ruleValidate": return false;
+      case "mtask":       return !mtaskForm.name || !mtaskForm.mapping_id;
+      case "dqtask":      return !dqTaskForm.source_table || !(config && config.has_dq_template);
+      case "schedule":    return !scheduleForm.name || !scheduleForm.startLocal;
+      case "taskflow":    return !taskflowForm.name || !taskflowForm.picked.length;
+      case "runtask":     return !runTaskId;
+      case "jobstatus":   return !jobRuns.length;
       default:            return false;
     }
   };
@@ -2880,6 +3342,240 @@ function App() {
               </div>
             )}
 
+            {/* Profile inputs (step 3) — profile once, cache for steps 4 and 7 */}
+            {activeStep === "profile" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Table to profile — runs once; steps 4 and 7 read the stored profile</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Table</label>
+                    {_scannedTables.length > 0 ? (
+                      <select value={profileObjectEffective} onChange={e => setProfileObject(e.target.value)} className={INPUT_CLS}>
+                        {[...new Set([..._scannedTables, ...(profileObject ? [profileObject] : [])])].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" value={profileObject} onChange={e => setProfileObject(e.target.value)}
+                        placeholder={defaultAsset || "TABLE_NAME (scan a table first to pick from a list)"}
+                        className={INPUT_CLS + " font-mono"}/>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Statistics source</label>
+                    <div className="flex gap-2">
+                      <button onClick={() => setProfileMode("local")}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "local" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                        Compute locally
+                      </button>
+                      <button onClick={() => setProfileMode("service")}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "service" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                        Informatica service
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">{profileMode === "local"
+                  ? "Direct warehouse query — synchronous, exact counts. The fallback when a connector cannot enumerate columns."
+                  : "Runs an IDMC profiling job, then reads statistics from CDGC — asynchronous; the progress bar tracks the poll."}</p>
+              </div>
+            )}
+
+            {/* Rule authoring inputs (step 7) — the rule the profiler had no basis to propose */}
+            {activeStep === "recommend_rules" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Author a rule — available while the review is open</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Rule name</label>
+                    <input type="text" value={ruleForm.rule_name}
+                      onChange={e => setRuleForm(f => ({ ...f, rule_name: e.target.value }))}
+                      placeholder="e.g. DQ_SSN_FORMAT" className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Dimension</label>
+                    <select value={ruleForm.dimension} onChange={e => setRuleForm(f => ({ ...f, dimension: e.target.value }))} className={INPUT_CLS}>
+                      {["COMPLETENESS", "VALIDITY", "ACCURACY", "CONSISTENCY", "TIMELINESS", "UNIQUENESS"].map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Logic template</label>
+                    <select value={ruleForm.rule_template} onChange={e => setRuleForm(f => ({ ...f, rule_template: e.target.value }))} className={INPUT_CLS}>
+                      <option value="">Built-in null check</option>
+                      {ruleTemplates.map(t => <option key={t.file} value={t.file}>{t.template} — {t.dimension}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Describe the rule in plain English</label>
+                  <input type="text" value={ruleForm.description}
+                    onChange={e => setRuleForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="e.g. regulatory constraint — SSN must match the 9-digit format" className={INPUT_CLS}/>
+                </div>
+                <p className="text-xs text-slate-400">
+                  <span className="font-mono">validate_rule</span> pre-flights the logic before it deploys;
+                  <span className="font-mono"> create_dq_rules</span> writes it to CDQ and adds it to the selection above —
+                  one approval record covers everything written.
+                </p>
+              </div>
+            )}
+
+            {/* Step 9 inputs — template guard first: setup guidance, not run-time failure */}
+            {activeStep === "schedule_execution" && config && !config.has_dq_template && (
+              <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
+                <span className="text-2xl">🔧</span>
+                <div>
+                  <div className="text-sm font-semibold text-slate-700">DQ execution template not configured (M_DQ_Generic)</div>
+                  <div className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Task generation binds the parameterized M_DQ_Generic mapping. Build it per
+                    docs/IDMC_Console_Runbook.md, then set IDMC_DQ_TEMPLATE_MAPPING_ID in .env.
+                    generate_dq_mapping_task stays disabled until then.
+                  </div>
+                </div>
+              </div>
+            )}
+            {activeStep === "schedule_execution" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Mapping tasks — generate from a rule, or create raw</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Source table (generate_dq_mapping_task)</label>
+                    <input type="text" value={dqTaskForm.source_table}
+                      onChange={e => setDqTaskForm(f => ({ ...f, source_table: e.target.value }))}
+                      placeholder={defaultAsset || "TABLE_NAME"} className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Rule specification</label>
+                    <select value={dqTaskForm.rule_spec_id} onChange={e => setDqTaskForm(f => ({ ...f, rule_spec_id: e.target.value }))} className={INPUT_CLS}>
+                      <option value="">Template defaults (no rule binding)</option>
+                      {orgRules.map(r => <option key={r.id} value={r.id}>{r.name}{r.dimension ? ` — ${r.dimension}` : ""}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Task name (optional)</label>
+                    <input type="text" value={dqTaskForm.task_name}
+                      onChange={e => setDqTaskForm(f => ({ ...f, task_name: e.target.value }))}
+                      placeholder="auto-generated when blank" className={INPUT_CLS}/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Raw task name (create_mapping_task)</label>
+                    <input type="text" value={mtaskForm.name}
+                      onChange={e => setMtaskForm(f => ({ ...f, name: e.target.value }))} className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Mapping id</label>
+                    <input type="text" value={mtaskForm.mapping_id}
+                      onChange={e => setMtaskForm(f => ({ ...f, mapping_id: e.target.value }))} className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                </div>
+              </div>
+            )}
+            {activeStep === "schedule_execution" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Schedule (create_schedule)</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Schedule name</label>
+                    <input type="text" value={scheduleForm.name}
+                      onChange={e => setScheduleForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="e.g. Nightly_DQ_Run" className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">First run (local time — sent as .000Z UTC)</label>
+                    <input type="datetime-local" value={scheduleForm.startLocal}
+                      onChange={e => setScheduleForm(f => ({ ...f, startLocal: e.target.value }))} className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">
+                      {scheduleForm.interval === "Hourly" ? "Every N hours" : scheduleForm.interval === "Monthly" ? "Day of month" : "Every N days"}
+                    </label>
+                    {scheduleForm.interval === "Monthly" ? (
+                      <input type="number" min="1" max="28" value={scheduleForm.day_of_month}
+                        onChange={e => setScheduleForm(f => ({ ...f, day_of_month: e.target.value }))} className={INPUT_CLS}/>
+                    ) : (
+                      <select value={scheduleForm.frequency} onChange={e => setScheduleForm(f => ({ ...f, frequency: e.target.value }))} className={INPUT_CLS}>
+                        <option value="">1 (default)</option>
+                        {(scheduleForm.interval === "Hourly" ? [2, 3, 4, 6, 8, 12] : [2, 3, 5, 7, 10, 14, 30]).map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {["Hourly", "Daily", "Weekly", "Monthly"].map(p => (
+                    <button key={p} onClick={() => setScheduleForm(f => ({ ...f, interval: p }))}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${scheduleForm.interval === p ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {activeStep === "schedule_execution" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Taskflow &amp; run</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Taskflow name (create_linear_taskflow)</label>
+                    <input type="text" value={taskflowForm.name}
+                      onChange={e => setTaskflowForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="e.g. TF_Nightly_Governance" className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Task to run now (run_task)</label>
+                    <select value={runTaskId} onChange={e => setRunTaskId(e.target.value)} className={INPUT_CLS}>
+                      <option value="">Select a task…</option>
+                      {(results.schedule_execution?.tasks || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Taskflow tasks — click to add in run order</label>
+                  <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 max-h-48 overflow-y-auto scrollbar-thin">
+                    {(results.schedule_execution?.tasks || []).map(t => {
+                      const idx = taskflowForm.picked.indexOf(t.id);
+                      return (
+                        <button key={t.id}
+                          onClick={() => setTaskflowForm(f => ({ ...f, picked: f.picked.includes(t.id) ? f.picked.filter(p => p !== t.id) : [...f.picked, t.id] }))}
+                          className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${idx >= 0 ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
+                          <span className={`w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold shrink-0 ${idx >= 0 ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-400"}`}>{idx >= 0 ? idx + 1 : "+"}</span>
+                          <span className="text-sm font-medium text-slate-700 truncate">{t.name}</span>
+                          <span className="ml-auto text-xs font-mono text-slate-400">{t.id}</span>
+                        </button>
+                      );
+                    })}
+                    {!(results.schedule_execution?.tasks || []).length && (
+                      <div className="text-xs text-slate-400 italic p-3">Run Step first — it lists the org's mapping tasks for these pickers.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 9 live job monitoring */}
+            {activeStep === "schedule_execution" && jobRuns.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Job runs — live (activity monitor, log fallback)</div>
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white divide-y divide-slate-100">
+                  {jobRuns.map(r => (
+                    <div key={r.runId} className="px-4 py-3 flex items-center gap-4">
+                      <JobStateChip label={r.state_label}/>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-slate-700 truncate">{r.taskName}</div>
+                        <div className="text-xs text-slate-400 font-mono">run {r.runId}{r.entry?.start_time ? ` · started ${r.entry.start_time}` : ""}{r.entry?.end_time ? ` · ended ${r.entry.end_time}` : ""}</div>
+                        {r.entry?.error_message && <div className="text-xs text-red-500 mt-0.5 break-words">{r.entry.error_message}</div>}
+                      </div>
+                      {r.entry && (
+                        <div className="text-xs text-slate-500 text-right shrink-0">
+                          <div><span className="text-emerald-600 font-semibold">{r.entry.success_target_rows ?? "—"}</span> rows ok</div>
+                          <div><span className={r.entry.failed_target_rows ? "text-red-500 font-semibold" : ""}>{r.entry.failed_target_rows ?? "—"}</span> failed</div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Lineage substep inputs (step 2) — provenance controls */}
             {activeStep === "scan" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
@@ -3059,6 +3755,48 @@ function App() {
               />
             )}
 
+            {/* Gate 3 — Recommend Rules: SAME panel, grouped by DQ dimension,
+                evidence as secondary text. Approving pushes into step 8. */}
+            {activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done && (() => {
+              const palettes = [
+                { color: "text-violet-600",  bg: "bg-violet-50" },
+                { color: "text-indigo-600",  bg: "bg-indigo-50" },
+                { color: "text-slate-700",   bg: "bg-slate-50" },
+                { color: "text-emerald-600", bg: "bg-emerald-50" },
+                { color: "text-amber-600",   bg: "bg-amber-50" },
+              ];
+              const recGroups = [...new Set(recItems.map(i => i.type))].map((t, i) => ({ type: t, label: t, ...palettes[i % palettes.length] }));
+              return (
+                <DomainApprovalPanel
+                  items={recItems}
+                  selected={recSelected}
+                  onToggle={(name) => setRecSelected(prev => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; })}
+                  onToggleGroup={(names, add) => setRecSelected(prev => { const n = new Set(prev); names.forEach(x => add ? n.add(x) : n.delete(x)); return n; })}
+                  onSelectAll={() => setRecSelected(new Set(recItems.map(i => i.name)))}
+                  onDeselectAll={() => setRecSelected(new Set())}
+                  onApprove={approveRecommendations}
+                  onRename={(oldName, newName) => {
+                    setRecItems(prev => prev.map(i => i.name === oldName ? { ...i, name: newName } : i));
+                    setRecSelected(prev => { const s = new Set(prev); if (s.has(oldName)) { s.delete(oldName); s.add(newName); } return s; });
+                  }}
+                  approving={false}
+                  groups={recGroups}
+                  banner={{ title: "Review before pushing to step 8",
+                            body: "Each row carries the profiling evidence behind it. Deselect what you don't want; rules authored below join the selection." }}
+                  approveLabel="Approve & Push to Step 8"
+                  busyLabel="Approving…"
+                />
+              );
+            })()}
+
+            {/* Step 8: the approved step 7 selection is carried into this run */}
+            {activeStep === "data_quality" && approvedRecs.length > 0 && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
+                ❋ <strong>{approvedRecs.length} evidence-backed recommendation{approvedRecs.length === 1 ? "" : "s"}</strong> approved at step 7 and carried into this run:
+                <span className="font-mono"> {approvedRecs.slice(0, 5).map(r => r.name).join(", ")}{approvedRecs.length > 5 ? ` +${approvedRecs.length - 5} more` : ""}</span>
+              </div>
+            )}
+
             {/* Run individually — one row for every step, driven by the STEPS
                 declaration. Substeps are labelled by TOOL name (the ladder table
                 is authoritative). Muted entries belong to phases that have not
@@ -3130,8 +3868,10 @@ function App() {
               );
             })()}
 
-            {/* Run / Stop / Skip buttons — suppressed for stub steps (the card above is the whole state) */}
-            {!active.stub && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done) && (
+            {/* Run / Stop / Skip buttons — suppressed for stub steps and open gates */}
+            {!active.stub
+              && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done)
+              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done) && (
             <div className="flex items-center gap-3">
               <button
                 onClick={() => runStep(activeStep)}
@@ -3152,7 +3892,13 @@ function App() {
 
               {activeStep === "domain_structure" && !taxonomyReady && (
                 <span className="text-xs text-amber-600 font-medium">
-                  Run <strong>Generate Taxonomy</strong> (Step 3) for this table first.
+                  Run <strong>Generate Taxonomy</strong> (Step 4) for this table first.
+                </span>
+              )}
+              {(activeStep === "taxonomy" || activeStep === "recommend_rules") && !profileReady && (
+                <span className="text-xs text-amber-600 font-medium">
+                  Run <strong>Profile Data</strong> (step 3) first — this step reads its stored profile.{" "}
+                  <button onClick={() => setActiveStep("profile")} className="underline text-brand">Go to step 3</button>
                 </span>
               )}
 
@@ -3212,7 +3958,9 @@ function App() {
             })()}
 
             {/* Results */}
-            {results[activeStep] && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done) && (
+            {results[activeStep]
+              && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done)
+              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done) && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Result</div>

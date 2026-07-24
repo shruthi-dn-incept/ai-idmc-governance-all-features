@@ -1486,6 +1486,7 @@ def generate_governance_taxonomy(
     domain_hint: str | None = None,
     organization_context: str | None = None,
     table_names: list[str] | None = None,
+    profile_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Use Claude AI to generate a domain/subdomain/business-term taxonomy.
 
@@ -1501,6 +1502,11 @@ def generate_governance_taxonomy(
                             "Supply Chain"). LLM infers one if absent.
       organization_context: Optional 1-2 sentence business context to help the
                             LLM write better definitions.
+      profile_stats:        Optional per-column profiling statistics
+                            ({total_rows, columns:{name:{type,null_pct,distinct,...}}}).
+                            When present, classification grounds in what the data
+                            contains rather than what the column is called, and each
+                            business term carries an 'evidence' field citing the stats.
 
     Returns: {domains:[{name, description, subdomains:[{name, description,
               business_terms:[{name, definition, synonyms, columns:[...]}]}]}]}
@@ -1554,6 +1560,12 @@ glossary taxonomy in JSON. Rules:
 - For each unique concept represented by a column (or group of columns), create
   a BusinessTerm with a clear, jargon-free definition (2-3 sentences).
 - Map each BusinessTerm to the specific column(s) it represents.
+- When per-column PROFILING STATISTICS are provided, ground the classification in
+  what the data actually contains (null rates, distinct counts, value ranges, top
+  values) rather than in column names alone, and add an "evidence" field to each
+  BusinessTerm citing the specific statistic(s) behind the classification
+  (e.g. "customer_name: 26% null, 96% distinct - free-text identity field").
+  Omit "evidence" when no statistics were provided.
 - Return ONLY valid JSON matching this exact schema:
 {
   "domains": [
@@ -1569,7 +1581,8 @@ glossary taxonomy in JSON. Rules:
               "name": "...",
               "definition": "...",
               "synonyms": ["..."],
-              "source_columns": ["TABLE.COLUMN", ...]
+              "source_columns": ["TABLE.COLUMN", ...],
+              "evidence": "... (only when profiling statistics were provided)"
             }
           ]
         }
@@ -1581,6 +1594,11 @@ glossary taxonomy in JSON. Rules:
     user_msg_parts = [
         f"Tables to analyze:\n{json.dumps(tables_summary, indent=2)}",
     ]
+    if profile_stats and profile_stats.get("columns"):
+        user_msg_parts.append(
+            "\nPROFILING STATISTICS (measured from the live data — ground the "
+            f"classification in these):\n{json.dumps(profile_stats, indent=2)}"
+        )
     if domain_hint:
         user_msg_parts.append(f"\nTop-level domain: {domain_hint}")
     if organization_context:
