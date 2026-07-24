@@ -60,8 +60,8 @@ const STEPS = [
   { id: "discover", num: 1, label: "Discover Catalog", icon: "⬡", route: "/api/step/discover",
     desc: "List all schemas and tables from the CDGC catalog.",
     substeps: [
-      { tool: "scan_mcc_source",  key: "scan_mcc_source",  route: null, note: "Next release (Phase 6)" },
-      { tool: "list_connections", key: "list_connections", route: null, note: "Next release (Phase 6)" },
+      { tool: "scan_mcc_source",  key: "scan_mcc_source",  route: "/api/step/scan_mcc_source", form: "mccscan" },
+      { tool: "list_connections", key: "list_connections", route: "/api/step/list_connections" },
     ] },
   { id: "scan", num: 2, label: "Scan Table", icon: "◈", route: "/api/step/scan",
     desc: "Select a table and fetch its column metadata (cached after first run). Provenance questions — where does this table come from, what breaks if I change it — are answered here, next to the columns.",
@@ -159,13 +159,13 @@ const STEPS = [
       { tool: "create_delivery_target",     key: "delivery_target",   route: "/api/step/delivery_target" },
     ] },
   { id: "consumer_access", num: 15, label: "Consumer Access", icon: "✓", route: "/api/step/consumer_access",
-    gateOn: ["approve_consumer_order", "withdraw_consumer_access"], gatePhase: "Phase 7",
-    desc: "Place, approve, verify and withdraw consumer access to the published collection.",
+    gateOn: ["approve_consumer_order", "withdraw_consumer_access"],
+    desc: "Place, approve, verify and withdraw consumer access. Approve and withdraw are gated — an authorisation decision and an irreversible one.",
     substeps: [
       { tool: "create_consumer_access",   key: "consumer_access", parent: true },
-      { tool: "approve_consumer_order",   key: "approve_order",   route: "/api/step/approve_order" },
+      { tool: "approve_consumer_order",   key: "approve_order",   route: "/api/step/approve_order",   gated: "approve" },
       { tool: "verify_consumer_access",   key: "verify_access",   route: "/api/step/verify_access" },
-      { tool: "withdraw_consumer_access", key: "withdraw_access", route: "/api/step/withdraw_access" },
+      { tool: "withdraw_consumer_access", key: "withdraw_access", route: "/api/step/withdraw_access", gated: "withdraw" },
     ] },
 ];
 
@@ -735,7 +735,7 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
 // and row content via props, never rebuilt. A second approval component
 // anywhere in this codebase is a defect.
 function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelectAll, onDeselectAll, onApprove, onRename, approving,
-                               groups: groupsProp, banner, approveLabel, busyLabel }) {
+                               groups: groupsProp, banner, approveLabel, busyLabel, tone, renamable = true }) {
   const groups = groupsProp || [
     { type: "Domain",       label: "Domains",          color: "text-violet-600",  bg: "bg-violet-50",  border: "border-violet-200" },
     { type: "SubDomain",    label: "Sub-Domains",       color: "text-indigo-600",  bg: "bg-indigo-50",  border: "border-indigo-200" },
@@ -829,11 +829,13 @@ function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelec
                         <div className="text-xs text-slate-400 mt-0.5">{item.subtitle}</div>
                       )}
                     </div>
+                    {renamable && (
                     <button
                       onClick={e => startEdit(item.name, e)}
                       className="shrink-0 opacity-0 group-hover:opacity-100 transition-all px-2 py-0.5 rounded bg-violet-100 text-violet-600 hover:bg-violet-200 text-xs font-medium"
                       title="Rename"
                     >✎ Rename</button>
+                    )}
                   </div>
                 );
               })}
@@ -848,7 +850,9 @@ function DomainApprovalPanel({ items, selected, onToggle, onToggleGroup, onSelec
         className={`w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm transition-all
           ${approving || selected.size === 0
             ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200"
-            : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-md shadow-emerald-100 hover:shadow-emerald-200"}`}
+            : tone === "red"
+              ? "bg-gradient-to-r from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 text-white shadow-md shadow-red-100 hover:shadow-red-200"
+              : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-md shadow-emerald-100 hover:shadow-emerald-200"}`}
       >
         {approving ? <><Spinner/> {busyLabel || "Creating in CDGC…"}</> : <>✓ {approveLabel || "Approve & Create"} ({selected.size} items)</>}
       </button>
@@ -873,6 +877,27 @@ function SystemDatasetResult({ data }) {
 }
 
 function CurateResult({ data }) {
+  // Gate 2 outcome: exactly the approved links were written.
+  if (data?.applied) {
+    const a = data.applied;
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          <SummaryCard label="Links written" value={a.linked ?? 0} color="text-emerald-600"/>
+          <SummaryCard label="Reviewed" value={data.matches_reviewed ?? data.matches?.length ?? 0}/>
+          <SummaryCard label="Errors" value={(a.errors || []).length} color={(a.errors || []).length ? "text-red-600" : "text-slate-400"}/>
+        </div>
+        {(a.errors || []).length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+            {a.errors.map((e, i) => <div key={i} className="text-xs text-red-600">{e.column} → {e.term}: {e.error}</div>)}
+          </div>
+        )}
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">
+          Only the approved links were written — deselected columns stay unlinked. {data.note || ""}
+        </div>
+      </div>
+    );
+  }
   const batches = data?.batches || [];
   const last = batches[batches.length - 1] || {};
   const totalLinked  = last.total_linked_so_far  ?? 0;
@@ -2268,6 +2293,58 @@ function RunTaskResult({ data }) {
   );
 }
 
+// ── Phase 6 remainder renderers ───────────────────────────────────────────────
+
+function ScanSourceResult({ data }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Discovered" value={data?.discovered_count ?? 0} color="text-emerald-600"/>
+        <SummaryCard label="Missing" value={(data?.missing || []).length} color={(data?.missing || []).length ? "text-red-500" : "text-slate-400"}/>
+      </div>
+      {(data?.missing || []).length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+          <div className="text-xs text-red-500 font-medium mb-2 uppercase tracking-wider">Not found in catalog</div>
+          <div className="flex flex-wrap gap-1.5">{data.missing.map(m => <span key={m} className="text-xs bg-white border border-red-200 text-red-600 px-2 py-0.5 rounded font-mono">{m}</span>)}</div>
+        </div>
+      )}
+      {(data?.tables || []).map(t => (
+        <div key={t.name} className="bg-white border border-slate-200 rounded-xl p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-mono font-bold text-slate-800">{t.name}</span>
+            <span className="text-xs text-slate-400">{t.schema}</span>
+            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded ml-auto">{(t.columns || []).length} columns</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(t.columns || []).slice(0, 30).map(c => <span key={c.name} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono">{c.name}</span>)}
+            {(t.columns || []).length > 30 && <span className="text-xs text-slate-400 px-2 py-0.5">+{t.columns.length - 30} more</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ConnectionsResult({ data }) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Connections" value={data?.count ?? 0}/>
+        <SummaryCard label="Total in org" value={data?.total ?? 0} color="text-slate-600"/>
+      </div>
+      <DataTable
+        columns={[
+          { key: "name", label: "Name", render: r => <span className="font-medium">{r.name}</span> },
+          { key: "type", label: "Type", render: r => <DimChip dim={r.type}/> },
+          { key: "id", label: "Connection ID", render: r => <span className="font-mono text-slate-500">{r.id}</span> },
+          { key: "updateTime", label: "Updated" },
+        ]}
+        rows={data?.connections || []}
+      />
+    </div>
+  );
+}
+
 const RESULT_RENDERERS = {
   discover:           DiscoverResult,
   scan:               ScanResult,
@@ -2314,6 +2391,8 @@ const SUB_RENDERERS = {
   create_schedule:           ScheduleCreatedResult,
   create_linear_taskflow:    TaskflowCreatedResult,
   run_task:                  RunTaskResult,
+  scan_mcc_source:           ScanSourceResult,
+  list_connections:          ConnectionsResult,
 };
 
 function SessionExpiredBanner({ message, onDismiss }) {
@@ -2444,7 +2523,50 @@ function App() {
   const [runTaskId, setRunTaskId] = useState("");
   const [jobRuns, setJobRuns] = useState([]);
   const [config, setConfig] = useState(null);
+  // Step 1 (Phase 6): catalog source scan inputs
+  const [mccForm, setMccForm] = useState({ tables: "", schema_hint: "" });
+  // Gate 2 (curate): proposed links awaiting review — nothing written until approve
+  const [curMatches, setCurMatches] = useState([]);
+  const [curSelected, setCurSelected] = useState(new Set());
+  const [curApproving, setCurApproving] = useState(false);
+  // Gates 4/5 (step 15): single-item confirmation before approve / withdraw
+  const [accessGate, setAccessGate] = useState(null);
+  // Settings panel: export/import
+  const [expForm, setExpForm] = useState({ ids: "", name: "" });
+  const [expBusy, setExpBusy] = useState(false);
+  const [expOut, setExpOut] = useState(null);
+  const [expErr, setExpErr] = useState(null);
+  const [impFile, setImpFile] = useState(null);
+  const [impBusy, setImpBusy] = useState(false);
+  const [impOut, setImpOut] = useState(null);
+  const [impErr, setImpErr] = useState(null);
   const [sessionExpired, setSessionExpired] = useState(null);
+
+  const doExport = async () => {
+    setExpBusy(true); setExpErr(null); setExpOut(null);
+    try {
+      const object_ids = expForm.ids.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      const body = { object_ids };
+      if (expForm.name) body.name = expForm.name;
+      setExpOut(await apiPost("/api/settings/export", body));
+    } catch (e) { setExpErr(e.message); }
+    finally { setExpBusy(false); }
+  };
+
+  const doImport = async () => {
+    if (!impFile) return;
+    setImpBusy(true); setImpErr(null); setImpOut(null);
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(",")[1] || "");
+        fr.onerror = rej;
+        fr.readAsDataURL(impFile);
+      });
+      setImpOut(await apiPost("/api/settings/import", { filename: impFile.name, content_base64: b64 }));
+    } catch (e) { setImpErr(e.message); }
+    finally { setImpBusy(false); }
+  };
 
   useEffect(() => { fetch("/api/config").then(r => r.json()).then(setConfig).catch(() => {}); }, []);
 
@@ -2652,6 +2774,12 @@ function App() {
       if (!jobRuns.length) return;
       body = { run_id: jobRuns[0].runId, task_id: jobRuns[0].taskId };
     }
+    else if (ss.form === "mccscan") {
+      const names = mccForm.tables.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      if (!names.length) return;
+      body = { table_names: names };
+      if (mccForm.schema_hint) body.schema_hint = mccForm.schema_hint;
+    }
     setSubRunning(prev => ({ ...prev, [ss.key]: true }));
     setErrors(prev => ({ ...prev, [step.id]: null }));
     // Requirement 7: after an individual run on a composite step, the dot is
@@ -2688,7 +2816,7 @@ function App() {
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
-  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, profileObject, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns]);
+  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, profileObject, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns, mccForm]);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -2831,7 +2959,30 @@ function App() {
         }
         data = preview;
       }
-      else if (stepId === "curate")            data = await apiPost("/api/step/curate", { sample_tables: estBasis.sample, total_in_schema: estBasis.total }, sig);
+      else if (stepId === "curate") {
+        // Gate 2: batches run dry — the LLM proposes links; approving writes
+        // exactly the selected subset. Deselected columns stay unlinked.
+        const out = await apiPost("/api/step/curate", { sample_tables: estBasis.sample, total_in_schema: estBasis.total }, sig);
+        const matches = out.matches || [];
+        if (out.awaiting_approval && matches.length) {
+          const seen = {};
+          const items = matches.map(m => {
+            let nm = `${m.table}.${m.column}`;
+            seen[nm] = (seen[nm] || 0) + 1;
+            if (seen[nm] > 1) nm = `${nm} (${seen[nm]})`;
+            const band = m.confidence == null ? "Unscored" : m.confidence >= 0.8 ? "High confidence" : "Medium confidence";
+            return { type: band, name: nm, parent: m.term_name,
+                     subtitle: `→ ${m.term_name} · ${m.confidence != null ? Math.round(m.confidence * 100) + "% match" : "unscored"}${m.data_type ? " · " + m.data_type : ""}`,
+                     match: m };
+          });
+          setCurMatches(items);
+          setCurSelected(new Set(items.map(it => it.name)));
+          abortRef.current = null;
+          setStatus(stepId, STATUS.idle);
+          return;
+        }
+        data = { ...out, applied: { linked: 0, skipped: 0, errors: [] }, note: "No links proposed by the matcher." };
+      }
       // Step 8 = rules + occurrences only; the score upload moved to step 10
       // (upload_dq_scores substep). /api/step/data_quality (rules+scores fused)
       // stays server-side for the run-all path but no ladder step calls it.
@@ -2879,6 +3030,29 @@ function App() {
       setStatus(stepId, STATUS.error);
     }
   }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode]);
+
+  // Gate 2 approve: writes exactly the approved column-to-term links.
+  const approveCuration = useCallback(async () => {
+    setCurApproving(true);
+    setStatus("curate", STATUS.running);
+    setErrors(prev => ({ ...prev, curate: null }));
+    try {
+      const links = curMatches.filter(it => curSelected.has(it.name))
+        .map(it => ({ term_id: it.match.term_id, column_id: it.match.column_id,
+                      table: it.match.table, column: it.match.column, term_name: it.match.term_name }));
+      const out = await apiPost("/api/step/apply_curation_links", { links });
+      setResults(prev => ({ ...prev, curate: { applied: out, matches_reviewed: curMatches.length, approved_count: links.length } }));
+      const totalFail = (out.errors || []).length > 0 && (out.linked || 0) === 0;
+      if ((out.errors || []).length) setErrors(prev => ({ ...prev, curate: `${out.errors.length} link(s) failed — detail in the result` }));
+      setStatus("curate", totalFail ? STATUS.error : STATUS.done);
+      setCurMatches([]);
+    } catch (e) {
+      setErrors(prev => ({ ...prev, curate: e.message }));
+      setStatus("curate", STATUS.error);
+    } finally {
+      setCurApproving(false);
+    }
+  }, [curMatches, curSelected]);
 
   // Gate 3 approve: pushes the selection into step 8 — writes nothing to CDGC here.
   const approveRecommendations = useCallback(() => {
@@ -3060,6 +3234,7 @@ function App() {
       case "taskflow":    return !taskflowForm.name || !taskflowForm.picked.length;
       case "runtask":     return !runTaskId;
       case "jobstatus":   return !jobRuns.length;
+      case "mccscan":     return !mccForm.tables.trim();
       default:            return false;
     }
   };
@@ -3116,13 +3291,57 @@ function App() {
               </div>
               <button onClick={() => setSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-sm">✕</button>
             </div>
-            <div className="bg-slate-50 border border-slate-300 rounded-xl p-4">
-              <div className="text-xs font-semibold text-slate-600 mb-1">Export / Import</div>
+            <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 space-y-3">
+              <div className="text-xs font-semibold text-slate-600">Export / Import</div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Asset bundles promoted between environments (export_assets, import_package).
-                These act on the org, not on the table moving through the ladder — which is why
-                they live here and not as a step. Ships in the next release (Phase 6).
+                Asset bundles promoted between environments — org scope, not the table in flight.
+                Both are fire-then-poll; export delivers a downloadable ZIP.
               </p>
+              <div>
+                <label className="block text-xs text-slate-500 font-medium mb-1">Object IDs (comma or newline separated)</label>
+                <textarea rows="2" value={expForm.ids}
+                  onChange={e => setExpForm(f => ({ ...f, ids: e.target.value }))}
+                  className={INPUT_CLS + " font-mono"}/>
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Package name (optional)</label>
+                  <input type="text" value={expForm.name}
+                    onChange={e => setExpForm(f => ({ ...f, name: e.target.value }))}
+                    placeholder="export" className={INPUT_CLS}/>
+                </div>
+                <button onClick={doExport} disabled={expBusy || !expForm.ids.trim()}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all shadow-sm
+                    ${expBusy || !expForm.ids.trim() ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed" : "bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-500"}`}>
+                  {expBusy ? "Exporting… (polling)" : "⇩ Export"}
+                </button>
+              </div>
+              {expErr && <div className="bg-red-50 border border-red-200 rounded-lg p-2"><pre className="text-xs text-red-700 whitespace-pre-wrap">{expErr}</pre></div>}
+              {expOut && (
+                <div className={`rounded-lg p-2.5 text-xs space-y-1 border ${expOut.package_path ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-slate-100 border-slate-300 text-slate-600"}`}>
+                  <div>Job <span className="font-mono">{expOut.job_id}</span> — {expOut.state}{expOut.package_bytes ? ` · ${(expOut.package_bytes / 1024).toFixed(1)} KB` : ""}</div>
+                  {expOut.download_url && (
+                    <a href={expOut.download_url} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 transition-colors">⬇ Download package</a>
+                  )}
+                </div>
+              )}
+              <div className="border-t border-slate-200 pt-3 space-y-2">
+                <label className="block text-xs text-slate-500 font-medium">Import a package ZIP (conflicts resolve as REUSE)</label>
+                <div className="flex items-center gap-2">
+                  <input type="file" accept=".zip" onChange={e => setImpFile(e.target.files && e.target.files[0] || null)} className="text-xs text-slate-600 flex-1"/>
+                  <button onClick={doImport} disabled={impBusy || !impFile}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all shadow-sm
+                      ${impBusy || !impFile ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed" : "bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-500"}`}>
+                    {impBusy ? "Importing…" : "⇧ Import"}
+                  </button>
+                </div>
+                {impErr && <div className="bg-red-50 border border-red-200 rounded-lg p-2"><pre className="text-xs text-red-700 whitespace-pre-wrap">{impErr}</pre></div>}
+                {impOut && (
+                  <div className={`rounded-lg p-2.5 text-xs border ${(impOut.state || "").includes("SUCCESS") ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-slate-100 border-slate-300 text-slate-600"}`}>
+                    Job <span className="font-mono">{impOut.upload_job_id}</span> — {impOut.state}{impOut.message ? ` · ${impOut.message}` : ""}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="bg-slate-50 border border-slate-300 rounded-xl p-4">
               <div className="text-xs font-semibold text-slate-600 mb-1">Approval policy</div>
@@ -3339,6 +3558,29 @@ function App() {
                   Fixes or backfills a single asset's score without re-running the scan — the common case after a
                   partial run. Fill these, then run the <span className="font-mono">propagate_dq_score</span> substep below.
                 </p>
+              </div>
+            )}
+
+            {/* Step 1 substep inputs — catalog source scan */}
+            {activeStep === "discover" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">scan_mcc_source — catalog metadata for named tables</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Table names (comma or newline separated)</label>
+                    <textarea rows="1" value={mccForm.tables}
+                      onChange={e => setMccForm(f => ({ ...f, tables: e.target.value }))}
+                      placeholder="CUSTOMER_POSITIONS, REF_COMPANY_CODE"
+                      className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Schema hint (optional)</label>
+                    <input type="text" value={mccForm.schema_hint}
+                      onChange={e => setMccForm(f => ({ ...f, schema_hint: e.target.value }))}
+                      className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">Read-only — resolves tables and columns from the already-populated catalog. list_connections needs no inputs.</p>
               </div>
             )}
 
@@ -3789,6 +4031,84 @@ function App() {
               );
             })()}
 
+            {/* Gate 2 — Curate Columns: SAME panel, grouped by match confidence.
+                Approving writes the selected links; deselected columns stay
+                unlinked, never linked to a fallback term. */}
+            {activeStep === "curate" && curMatches.length > 0 && statuses["curate"] !== STATUS.done && (() => {
+              const palettes = {
+                "High confidence":   { color: "text-emerald-600", bg: "bg-emerald-50" },
+                "Medium confidence": { color: "text-amber-600",   bg: "bg-amber-50" },
+                "Unscored":          { color: "text-slate-700",   bg: "bg-slate-50" },
+              };
+              const curGroups = ["High confidence", "Medium confidence", "Unscored"]
+                .filter(t => curMatches.some(i => i.type === t))
+                .map(t => ({ type: t, label: t, ...palettes[t] }));
+              return (
+                <DomainApprovalPanel
+                  items={curMatches}
+                  selected={curSelected}
+                  onToggle={(name) => setCurSelected(prev => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; })}
+                  onToggleGroup={(names, add) => setCurSelected(prev => { const n = new Set(prev); names.forEach(x => add ? n.add(x) : n.delete(x)); return n; })}
+                  onSelectAll={() => setCurSelected(new Set(curMatches.map(i => i.name)))}
+                  onDeselectAll={() => setCurSelected(new Set())}
+                  onApprove={approveCuration}
+                  onRename={() => {}}
+                  renamable={false}
+                  approving={curApproving}
+                  groups={curGroups}
+                  banner={{ title: "Review column-to-term links before writing to CDGC",
+                            body: "Grouped by match confidence. Deselected columns are left unlinked — never linked to a fallback term. Create a missing term with the glossary tools above without leaving this review." }}
+                  approveLabel="Approve & Write Links"
+                  busyLabel="Writing links…"
+                />
+              );
+            })()}
+
+            {/* Gates 4/5 — step 15: single-item confirmation before an
+                authorisation decision (approve) or an irreversible one (withdraw) */}
+            {activeStep === "consumer_access" && accessGate && (() => {
+              const order = results.consumer_access || {};
+              const delivery = results.configure_delivery || {};
+              const requester = order.consumer || "demo consumer (this org)";
+              const assetName = order.collection_id ? `collection ${String(order.collection_id).slice(0, 8)}…` : "the published collection";
+              const target = (delivery.delivery_target && (delivery.delivery_target.name || delivery.delivery_target.target_type)) || "configured delivery target";
+              const isW = accessGate.kind === "withdraw";
+              const item = {
+                type: "Order",
+                name: order.order_ref || order.order_id || "current access order",
+                subtitle: isW
+                  ? `consumer losing access: ${requester} · asset: ${assetName}`
+                  : `requester: ${requester} · asset: ${assetName} · delivery target: ${target}`,
+              };
+              return (
+                <div className="space-y-2">
+                  <DomainApprovalPanel
+                    items={[item]}
+                    selected={new Set([item.name])}
+                    onToggle={() => {}}
+                    onToggleGroup={() => {}}
+                    onSelectAll={() => {}}
+                    onDeselectAll={() => {}}
+                    onApprove={() => { const ss = accessGate.ss; setAccessGate(null); runSubAction(active, ss); }}
+                    onRename={() => {}}
+                    renamable={false}
+                    approving={false}
+                    groups={[{ type: "Order", label: "Access Order", color: isW ? "text-red-600" : "text-slate-700", bg: isW ? "bg-red-50" : "bg-slate-50" }]}
+                    banner={isW
+                      ? { title: "Withdraw access — destructive and irreversible from the UI",
+                          body: `This revokes ${requester}'s access to ${assetName}. There is no undo here.` }
+                      : { title: "Authorisation decision — review before approving",
+                          body: "Fulfilling a consumer's data access request must not be reachable by clicking through." }}
+                    approveLabel={isW ? `Withdraw Access — ${requester}` : "Approve Order"}
+                    tone={isW ? "red" : undefined}
+                  />
+                  <button onClick={() => setAccessGate(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">
+                    Cancel — close without executing
+                  </button>
+                </div>
+              );
+            })()}
+
             {/* Step 8: the approved step 7 selection is carried into this run */}
             {activeStep === "data_quality" && approvedRecs.length > 0 && (
               <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
@@ -3849,9 +4169,9 @@ function App() {
                     return (
                       <button
                         key={ss.tool}
-                        onClick={() => runSubAction(active, ss)}
+                        onClick={() => ss.gated ? setAccessGate({ ss, kind: ss.gated }) : runSubAction(active, ss)}
                         disabled={anyRunning || needsForm}
-                        title={needsForm ? "Fill this tool's inputs above first" : undefined}
+                        title={needsForm ? "Fill this tool's inputs above first" : (ss.gated ? "Opens a confirmation gate" : undefined)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-sm
                           ${isRunning || needsForm ? "bg-indigo-100 border-indigo-300 text-indigo-500 cursor-not-allowed"
                           : failed    ? "bg-red-100 border-red-400 text-red-700 hover:bg-red-200"
@@ -3871,7 +4191,8 @@ function App() {
             {/* Run / Stop / Skip buttons — suppressed for stub steps and open gates */}
             {!active.stub
               && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done)
-              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done) && (
+              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done)
+              && !(activeStep === "curate" && curMatches.length > 0 && statuses["curate"] !== STATUS.done) && (
             <div className="flex items-center gap-3">
               <button
                 onClick={() => runStep(activeStep)}
@@ -3960,7 +4281,8 @@ function App() {
             {/* Results */}
             {results[activeStep]
               && !(activeStep === "domain_structure" && domainItems.length > 0 && statuses["domain_structure"] !== STATUS.done)
-              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done) && (
+              && !(activeStep === "recommend_rules" && recItems.length > 0 && statuses["recommend_rules"] !== STATUS.done)
+              && !(activeStep === "curate" && curMatches.length > 0 && statuses["curate"] !== STATUS.done) && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Result</div>

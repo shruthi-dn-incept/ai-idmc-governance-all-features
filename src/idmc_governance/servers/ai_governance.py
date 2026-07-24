@@ -2290,6 +2290,7 @@ def curate_batch(
     linked  = 0
     skipped = 0
     errors: list[dict[str, Any]] = []
+    matches: list[dict[str, Any]] = []   # returned on dry_run — feeds the Gate 2 review
 
     matched_cols: set[tuple[str, str]] = set()
 
@@ -2307,6 +2308,15 @@ def curate_batch(
         matched_cols.add((table_up, col_up))
         term_id = term_entry["id"]
         col_id  = col_entry["column_id"]
+        matches.append({
+            "table":      col_entry["table"],
+            "column":     col_entry["column"],
+            "column_id":  col_id,
+            "term_name":  term_entry["name"],
+            "term_id":    term_id,
+            "confidence": m.get("confidence"),
+            "data_type":  col_entry.get("data_type", ""),
+        })
 
         if dry_run or not col_id or not term_id:
             skipped += 1
@@ -2342,7 +2352,7 @@ def curate_batch(
 
     _save_govern_state(state)
 
-    return {
+    out = {
         "batch_index":          batch_index,
         "columns_processed":    f"{start + 1}–{end} of {total}",
         "linked":               linked,
@@ -2354,6 +2364,48 @@ def curate_batch(
         "batches_remaining":    batch_count - len(prog["batches_done"]),
         "done":                 all_done,
     }
+    if dry_run:
+        # Gate 2 reads these: the proposed links with confidence, nothing written.
+        out["matches"] = matches
+    return out
+
+
+@mcp.tool()
+def apply_curation_links(links: list[dict[str, Any]]) -> dict[str, Any]:
+    """Write an APPROVED set of column-to-term links to CDGC (Gate 2 commit).
+
+    The review gate collects proposals from curate_batch(dry_run=True); this
+    writes exactly the approved subset — deterministic, no LLM re-run.
+    Deselected columns are left unlinked, never linked to a fallback term.
+
+    Args:
+      links: [{term_id, column_id, table?, column?, term_name?}] — ids required.
+
+    Returns: {linked, skipped, errors:[{column, term, error}]}
+    """
+    linked, skipped = 0, 0
+    errors: list[dict[str, Any]] = []
+    for ln in links or []:
+        term_id, col_id = ln.get("term_id"), ln.get("column_id")
+        if not term_id or not col_id:
+            skipped += 1
+            continue
+        try:
+            _cdgc_link_term_to_asset(term_id, col_id)
+            linked += 1
+        except Exception as e:  # noqa: BLE001
+            errors.append({"column": f"{ln.get('table','?')}.{ln.get('column','?')}",
+                           "term": ln.get("term_name"), "error": str(e)[:200]})
+            skipped += 1
+    # Record in govern state so downstream steps see curation as done.
+    state = _load_govern_state()
+    prog = state.get("curate_progress") or {"linked": 0, "skipped": 0, "batches_done": []}
+    prog["linked"] += linked
+    state["curate_progress"] = prog
+    state["curate"] = {"linked_count": prog["linked"], "skipped_count": prog.get("skipped", 0),
+                       "approved_via_gate": True}
+    _save_govern_state(state)
+    return {"linked": linked, "skipped": skipped, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

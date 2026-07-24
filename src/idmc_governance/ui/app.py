@@ -1058,20 +1058,38 @@ async def step_curate(req: EstimateRequest = EstimateRequest()):
         batch_size  = plan.get("result", {}).get("batch_size", 40)
         if batch_count == 0:
             raise HTTPException(status_code=400, detail="No columns found to curate. Ensure scan completed successfully.")
+        # Gate 2: batches run in DRY-RUN — the LLM proposes links, nothing is
+        # written. The gate's approve action commits the selected subset via
+        # apply_curation_links. Deselected columns stay unlinked.
         batches: list[dict] = []
+        matches: list[dict] = []
         for i in range(batch_count):
             r = await _call(AI_GOVERNANCE_URL, "curate_batch", {
-                "batch_index": i, "batch_size": batch_size,
+                "batch_index": i, "batch_size": batch_size, "dry_run": True,
             })
             if r.get("error"):
                 raise HTTPException(status_code=400, detail=f"curate_batch[{i}] error: {r['error']}")
             batches.append(r)
+            matches.extend(r.get("matches") or [])
             if r.get("done"):
                 break
-        return {"plan": plan, "batches": batches,
+        return {"plan": plan, "batches": batches, "matches": matches,
+                "awaiting_approval": True,
                 **_estimate_block(_time.monotonic() - t0, req.sample_tables, req.total_in_schema)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApplyCurationRequest(BaseModel):
+    links: list[dict]
+
+
+@app.post("/api/step/apply_curation_links")
+async def step_apply_curation_links(req: ApplyCurationRequest):
+    """Gate 2 commit — writes exactly the approved column-to-term links."""
+    if not req.links:
+        raise HTTPException(422, "Nothing approved — select at least one link.")
+    return await _bridge(AI_GOVERNANCE_URL, "apply_curation_links", {"links": req.links})
 
 
 # ── Step 7: DQ Rules ──────────────────────────────────────────────────────────
@@ -1264,6 +1282,88 @@ async def step_create_collection():
         except Exception as e:
             result[key] = {"status": "failed", "error": str(e)}
     return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 6 remainder — step 1 substeps + settings-panel export/import
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ScanSourceRequest(BaseModel):
+    table_names: list[str]
+    schema_hint: str | None = None
+    force_refresh: bool = False
+
+
+@app.post("/api/step/scan_mcc_source")
+async def step_scan_mcc_source(req: ScanSourceRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(AI_GOVERNANCE_URL, "scan_mcc_source", args)
+
+
+class ConnectionsRequest(BaseModel):
+    top: int = 100
+    type_filter: str | None = None
+
+
+@app.post("/api/step/list_connections")
+async def step_list_connections(req: ConnectionsRequest = ConnectionsRequest()):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GOVERNANCE_ENGINE_URL, "list_connections", args)
+
+
+# Settings panel: export/import act on the ORG, not the dataset in flight —
+# they live behind the gear icon, never on the ladder.
+_EXPORT_DIR = _REPO_ROOT / "state" / "exports"
+
+
+class ExportRequest(BaseModel):
+    object_ids: list[str]
+    name: str | None = None
+    include_dependencies: bool = True
+
+
+@app.post("/api/settings/export")
+async def settings_export(req: ExportRequest):
+    if not req.object_ids:
+        raise HTTPException(422, "Provide at least one object id to export.")
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    args = {"object_ids": req.object_ids, "output_dir": str(_EXPORT_DIR),
+            "include_dependencies": req.include_dependencies}
+    if req.name:
+        args["name"] = req.name
+    out = await _bridge(GOVERNANCE_ENGINE_URL, "export_assets", args)
+    if isinstance(out, dict) and out.get("package_path"):
+        out["download_url"] = f"/api/settings/export/download/{Path(out['package_path']).name}"
+    return out
+
+
+@app.get("/api/settings/export/download/{filename}")
+async def settings_export_download(filename: str):
+    safe = Path(filename).name          # basename only — no traversal
+    p = _EXPORT_DIR / safe
+    if not p.exists():
+        raise HTTPException(404, "Export package not found (it may have been cleaned up).")
+    return FileResponse(str(p), media_type="application/zip", filename=safe)
+
+
+class ImportRequest(BaseModel):
+    filename: str
+    content_base64: str
+    default_conflict: str = "REUSE"
+
+
+@app.post("/api/settings/import")
+async def settings_import(req: ImportRequest):
+    import base64
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _EXPORT_DIR / Path(req.filename or "import.zip").name
+    try:
+        dest.write_bytes(base64.b64decode(req.content_base64))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"Could not decode uploaded package: {e}")
+    return await _bridge(GOVERNANCE_ENGINE_URL, "import_package", {
+        "zip_path": str(dest), "default_conflict": req.default_conflict,
+    })
 
 
 @app.post("/api/step/link_asset_to_collection")
