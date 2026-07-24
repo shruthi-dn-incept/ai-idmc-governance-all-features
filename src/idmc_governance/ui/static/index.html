@@ -73,10 +73,10 @@ const STEPS = [
   { id: "profile", num: 3, label: "Profile Data", icon: "◍", route: "/api/step/profile",
     desc: "Measure what the data actually contains — null counts, distinct counts, min/max, top values — per column. Runs once; steps 4 and 7 read the stored profile.",
     substeps: [
-      { tool: "create_profile",                 key: "create_profile",                 route: "/api/step/create_profile",                 form: "profileObj" },
-      { tool: "run_profile",                    key: "run_profile",                    route: "/api/step/run_profile",                    form: "profileObj" },
-      { tool: "get_profile_results",            key: "get_profile_results",            route: "/api/step/get_profile_results",            form: "profileObj" },
-      { tool: "compute_profile_from_snowflake", key: "compute_profile_from_snowflake", route: "/api/step/compute_profile_from_snowflake", form: "profileObj" },
+      { tool: "compute_profile_from_snowflake", key: "compute_profile_from_snowflake", route: "/api/step/compute_profile_from_snowflake", form: "profileObj", label: "Warehouse query" },
+      { tool: "create_profile",                 key: "create_profile",                 route: "/api/step/create_profile",                 form: "profileObj", label: "Informatica profile" },
+      { tool: "run_profile",                    key: "run_profile",                    route: "/api/step/run_profile",                    form: "profileObj", label: "Run profile" },
+      { tool: "get_profile_results",            key: "get_profile_results",            route: "/api/step/get_profile_results",            form: "profileObj", label: "Fetch results" },
     ] },
   { id: "taxonomy", num: 4, label: "Generate Taxonomy", icon: "◫", route: "/api/step/taxonomy",
     desc: "LLM generates a domain / subdomain / business-term tree from the scanned column metadata.",
@@ -2186,47 +2186,75 @@ function ProfileResult({ data }) {
   const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally — direct Snowflake query"
                   : data?.profile_path === "cdgc_catalog"     ? "Informatica profiling service (read from CDGC)"
                   : "Informatica profiling service";
+  const totalRows = Number(data?.total_rows) || 0;
+  // READS AS — UI-side inference (NOT an IDMC output): identifier / code list /
+  // measure / date / free text, from type, distinct count and null rate.
+  const readsAs = (st) => {
+    const t = (st.data_type || "").toLowerCase();
+    const dc = st.distinct_count, nl = Number(st.null_pct);
+    if (/date|time/.test(t)) return "date";
+    if (/num|int|float|deci|double|real/.test(t)) return "measure";
+    if (dc != null && totalRows && dc >= totalRows * 0.95 && (Number.isNaN(nl) || nl <= 0.05)) return "identifier";
+    if (dc != null && dc > 0 && dc <= 12) return "code list";
+    return "free text";
+  };
+  const nullPctNum = (pct) => pct == null ? null : (Number(pct) <= 1 ? Number(pct) * 100 : Number(pct));
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {data?._cached && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
           Profiled {data._saved_at ? `at ${data._saved_at}` : "earlier this session"} — cached, not re-executed. Run Step to refresh.
         </div>
       )}
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Rows profiled" value={(data?.total_rows ?? 0).toLocaleString ? (data?.total_rows ?? 0).toLocaleString() : (data?.total_rows ?? "—")}/>
-        <SummaryCard label="Columns" value={names.length}/>
-        <SummaryCard label="Statistics path" value={data?.profile_path === "snowflake_direct" ? "Snowflake direct" : "IDMC service"} color="text-slate-600"/>
-      </div>
-      {/* The two paths have different fidelity — always say which produced the numbers */}
-      <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">{pathLabel}</div>
-      {names.length > 0 ? (
-        <DataTable
-          columns={[
-            { key: "name",     label: "Column",   render: r => <span className="font-mono font-semibold">{r.name}</span> },
-            { key: "type",     label: "Type",     render: r => <span className="text-slate-500">{r.stats.data_type || "—"}</span> },
-            { key: "nulls",    label: "Nulls",    render: r => {
-                const pct = r.stats.null_pct;
-                const bad = Number(pct) > (Number(pct) <= 1 ? 0.1 : 10);
-                return <span className={bad ? "text-red-600 font-semibold" : ""}>{r.stats.null_count ?? "—"} ({fmtPct(pct)})</span>;
-              } },
-            { key: "distinct", label: "Distinct", render: r => r.stats.distinct_count ?? "—" },
-            { key: "min",      label: "Min",      render: r => <span className="font-mono">{String(r.stats.min_value ?? "—").slice(0, 24)}</span> },
-            { key: "max",      label: "Max",      render: r => <span className="font-mono">{String(r.stats.max_value ?? "—").slice(0, 24)}</span> },
-            { key: "top",      label: "Top value", render: r => {
-                const tv = (r.stats.top_values || [])[0];
-                return tv ? <span className="font-mono">{String(tv.value).slice(0, 20)} ×{tv.count}</span> : "—";
-              } },
-          ]}
-          rows={names.map(n => ({ name: n, stats: cols[n] || {} }))}
-        />
-      ) : (
-        <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">
-          No column statistics returned — the connector may not enumerate columns through the profiling
-          service, or CDGC hasn't ingested the run yet (statistics propagate a few minutes after the job).
-          "Compute locally" queries the warehouse directly and returns immediately.
+      {/* Single Profile results card (not one panel per substep) */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Profile results</span>
+          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-bold">NEW STEP</span>
+          <span className="ml-auto text-xs text-slate-400">
+            {totalRows ? `${totalRows.toLocaleString()} rows · ` : ""}{names.length} columns · {data?.profile_path === "snowflake_direct" ? "Snowflake direct" : "IDMC service"}
+          </span>
         </div>
-      )}
+        {names.length > 0 ? (
+          <DataTable
+            columns={[
+              { key: "name",  label: "Column", render: r => <span className="font-mono font-semibold">{r.name}</span> },
+              { key: "nullpct", label: "Null %", render: r => {
+                  const p = nullPctNum(r.stats.null_pct);
+                  if (p == null) return <span className="text-slate-400">—</span>;
+                  const bad = p > 10;
+                  return (
+                    <div className="flex items-center gap-2 min-w-[90px]">
+                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className={bad ? "h-full bg-red-400" : "h-full bg-emerald-400"} style={{ width: `${Math.min(p, 100)}%` }}/></div>
+                      <span className={`text-xs ${bad ? "text-red-600 font-semibold" : "text-slate-500"}`}>{p.toFixed(1)}%</span>
+                    </div>
+                  );
+                } },
+              { key: "distinct", label: "Distinct", render: r => {
+                  const dc = r.stats.distinct_count;
+                  if (dc == null) return <span className="text-slate-400">—</span>;
+                  const dup = totalRows && dc < totalRows;
+                  return <span className="flex items-center gap-1.5">{dc.toLocaleString ? dc.toLocaleString() : dc}{dup ? <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">dup</span> : null}</span>;
+                } },
+              { key: "minmax", label: "Min / Max", render: r => <span className="font-mono text-slate-500">{String(r.stats.min_value ?? "—").slice(0, 16)} / {String(r.stats.max_value ?? "—").slice(0, 16)}</span> },
+              { key: "reads", label: "Reads as", render: r => <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{readsAs(r.stats)}</span> },
+            ]}
+            rows={names.map(n => ({ name: n, stats: cols[n] || {} }))}
+          />
+        ) : (
+          <div className="p-4 text-xs text-slate-500">
+            No column statistics returned — the connector may not enumerate columns through the profiling
+            service, or CDGC hasn't ingested the run yet (statistics propagate a few minutes after the job).
+            "Warehouse query" queries Snowflake directly and returns immediately.
+          </div>
+        )}
+      </div>
+      {/* The case for the step's position — the Opella argument */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 text-xs text-indigo-700 leading-relaxed">
+        <span className="font-semibold">Why this runs before taxonomy.</span> "Reads as" is derived from distinct counts,
+        null rates and ranges. Without it the next step classifies on column names alone, which produces descriptions
+        rather than a taxonomy.
+      </div>
     </div>
   );
 }
@@ -2610,6 +2638,11 @@ function App() {
   // Step 3 (Phase 1): profile once, cache, two consumers
   const [profileObject, setProfileObject] = useState(_saved?.profileObject || "");
   const [profileMode, setProfileMode] = useState(_saved?.profileMode || "local");
+  // Step 3 selector must carry the {database, schema} triple, or
+  // compute_profile_from_snowflake falls back to IDMC_DQ_SCHEMA_PATH and fails
+  // "table not found in INFORMATION_SCHEMA" for any table outside that default.
+  const [profileSchema, setProfileSchema] = useState(_saved?.profileSchema || "");
+  const [profileDatabase, setProfileDatabase] = useState(_saved?.profileDatabase || "");
   // Step 7 (Phase 1): Gate 3 state + approved selection carried into step 8
   const [recItems, setRecItems] = useState([]);
   const [recSelected, setRecSelected] = useState(new Set());
@@ -2731,9 +2764,9 @@ function App() {
   // Persist key state to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, approvedRecs }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs }));
     } catch {}
-  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, approvedRecs]);
+  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs]);
 
   const discoverTables    = results.discover?.result?.tables_for_selection || [];
   const discoverSources   = results.discover?.result?.catalog_sources_grouped || [];
@@ -2837,7 +2870,7 @@ function App() {
     else if (ss.form === "profileObj") {
       const obj = profileObject || defaultAsset;
       if (!obj) return;
-      body = { object_name: obj };
+      body = { object_name: obj, database: profileDatabase || undefined, schema: profileSchema || scanSchema || undefined };
     }
     else if (ss.form === "rule") {
       if (!ruleForm.rule_name) return;
@@ -2921,7 +2954,7 @@ function App() {
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
-  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, profileObject, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns, mccForm]);
+  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, scanSchema, profileObject, profileSchema, profileDatabase, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns, mccForm]);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -2981,8 +3014,13 @@ function App() {
         const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
         const objName = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scanned[0] || "";
         if (!objName) throw new Error("Pick a table to profile — scan one first, or type a name above.");
+        // The step-3 card's effect prefills profileSchema/profileDatabase from the
+        // discover grouping; read that state (fallback to scanSchema) and carry the
+        // {database, schema, table} triple — the fix for the wrong-schema failure.
+        const schemaArg = profileSchema || scanSchema || undefined;
+        const dbArg = profileDatabase || undefined;
         if (profileMode === "local") {
-          data = await apiPost("/api/step/profile", { object_name: objName, mode: "local" }, sig);
+          data = await apiPost("/api/step/profile", { object_name: objName, mode: "local", database: dbArg, schema: schemaArg }, sig);
         } else {
           // Asynchronous: start the IDMC job, poll it, then read stats from CDGC.
           const exec = await apiPost("/api/step/profile", { object_name: objName, mode: "service" }, sig);
@@ -3137,7 +3175,7 @@ function App() {
       setStatus(stepId, STATUS.error);
       return "error";
     }
-  }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode]);
+  }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode, profileSchema, profileDatabase]);
 
   // ── Run-all control ─────────────────────────────────────────────────────────
   // A small secondary control, not a primary CTA. Walks the ladder top to
@@ -3403,6 +3441,37 @@ function App() {
   const _scannedTables = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
   const defaultAsset = (scanTable && scanTable !== "__ALL__" ? scanTable : "") || _scannedTables[0] || "";
   const profileObjectEffective = profileObject || defaultAsset;
+
+  // Resolve {database, schema, source, snowflake?} for a table from the discover
+  // grouping, so step 3 sends the triple compute_profile_from_snowflake needs.
+  const _cfgDbPath = (config?.dq_schema_path || "").split("/");   // e.g. INCEPT_GOV_DEV/DQ_TEST
+  const _NON_SF = /databricks|adls|gen2|_s3\b|s3_|delta|volume|bronze|silver|gold|accuweather|bakehouse|nyctaxi|healthverity/i;
+  const resolveProfileLoc = (table) => {
+    for (const src of discoverSources) {
+      for (const db of (src.databases || [{ database: "", schemas: src.schemas || [] }])) {
+        for (const sc of (db.schemas || [])) {
+          if ((sc.tables || []).some(t => t.name === table)) {
+            const snowflake = !_NON_SF.test(`${src.source} ${sc.schema} ${db.database}`);
+            return { source: src.source, schema: sc.schema, database: db.database || _cfgDbPath[0] || "", snowflake };
+          }
+        }
+      }
+    }
+    return { source: scanSource || "", schema: scanSchema || _cfgDbPath[1] || "", database: _cfgDbPath[0] || "", snowflake: true };
+  };
+  const profileLoc = resolveProfileLoc(profileObjectEffective);
+  const profileSchemaEff = profileSchema || profileLoc.schema;
+  const profileDatabaseEff = profileDatabase || profileLoc.database;
+
+  // When the profiled table changes, reset schema/database to the resolved
+  // values (steward can still override in the inputs).
+  useEffect(() => {
+    if (activeStep !== "profile" || !profileObjectEffective) return;
+    const loc = resolveProfileLoc(profileObjectEffective);
+    setProfileSchema(loc.schema || "");
+    setProfileDatabase(loc.database || "");
+    if (!loc.snowflake) setProfileMode("service");   // local path is Snowflake-only
+  }, [profileObjectEffective, activeStep]);
   const canRun = (activeStep !== "scan" || (scanSchema && scanTable))
               && (activeStep !== "marketplace" || marketplaceCollectionId)
               && (activeStep !== "monitor_quality" || !!monitorForm.asset_name)
@@ -3822,9 +3891,10 @@ function App() {
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Statistics source</label>
                     <div className="flex gap-2">
-                      <button onClick={() => setProfileMode("local")}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "local" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
-                        Compute locally
+                      <button onClick={() => setProfileMode("local")} disabled={!profileLoc.snowflake}
+                        title={profileLoc.snowflake ? "" : "Warehouse query is Snowflake-only; this source isn't Snowflake"}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${!profileLoc.snowflake ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed" : profileMode === "local" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                        Warehouse query
                       </button>
                       <button onClick={() => setProfileMode("service")}
                         className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${profileMode === "service" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
@@ -3833,9 +3903,22 @@ function App() {
                     </div>
                   </div>
                 </div>
+                {/* Selector carries {database, schema} — not just the table name */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Database</label>
+                    <input type="text" value={profileDatabaseEff} onChange={e => setProfileDatabase(e.target.value)}
+                      placeholder="e.g. INCEPT_GOV_DEV" className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Schema</label>
+                    <input type="text" value={profileSchemaEff} onChange={e => setProfileSchema(e.target.value)}
+                      placeholder="e.g. DQ_TEST" className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                </div>
                 <p className="text-xs text-slate-400">{profileMode === "local"
-                  ? "Direct warehouse query — synchronous, exact counts. The fallback when a connector cannot enumerate columns."
-                  : "Runs an IDMC profiling job, then reads statistics from CDGC — asynchronous; the progress bar tracks the poll."}</p>
+                  ? `Direct Snowflake query on ${profileDatabaseEff || "?"}.${profileSchemaEff || "?"} — synchronous, exact counts.`
+                  : "Runs an IDMC profiling job, then reads statistics from CDGC — asynchronous; the progress bar tracks the poll. Needs a profile defined in IDMC for this table first (surfaced verbatim if absent)."}</p>
               </div>
             )}
 
@@ -4397,7 +4480,9 @@ function App() {
                           :             "bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-500"}`}
                       >
                         {isRunning ? <Spinner/> : ok ? <span className="text-emerald-500">✓</span> : failed ? <span className="text-red-500">✗</span> : null}
-                        <span className="font-mono">{ss.tool}</span>
+                        {ss.label
+                          ? <span>{ss.label} <span className="font-mono font-normal opacity-70 text-[10px]">{ss.tool}</span></span>
+                          : <span className="font-mono">{ss.tool}</span>}
                       </button>
                     );
                   })}
