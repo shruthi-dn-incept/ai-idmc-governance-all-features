@@ -463,10 +463,43 @@ def generate_impact_report(
 
     distinct = len(affected)
     severity = _classify_severity(distinct, edges)
+
+    # Per-asset severity for the UI's impact table. Computed HERE via the same
+    # _classify_severity primitive (never recomputed in the UI): each affected
+    # asset is classified on ITS OWN downstream sub-blast-radius within these
+    # edges — a leaf scores LOW, an asset with a large/BI-bearing subtree scores
+    # higher. The report-level `severity` above stays the root's overall verdict.
+    out_adj: dict[str, list[dict[str, Any]]] = {}
+    for e in edges:
+        out_adj.setdefault(e.get("fromId"), []).append(e)
+
+    def _downstream(node_id: str) -> tuple[set[str], list[dict[str, Any]]]:
+        seen: set[str] = set()
+        sub_edges: list[dict[str, Any]] = []
+        stack = [node_id]
+        while stack:
+            n = stack.pop()
+            for e in out_adj.get(n, []):
+                sub_edges.append(e)
+                t = e.get("toId")
+                if t and t not in seen:
+                    seen.add(t)
+                    stack.append(t)
+        return seen, sub_edges
+
+    for a in affected.values():
+        sub_ids, sub_edges = _downstream(a["id"])
+        a["severity"] = _classify_severity(len(sub_ids), sub_edges)
+
+    # Sort highest severity first (the UI table matches this order), then by hops.
+    _sev_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     top_affected = sorted(
         affected.values(),
-        key=lambda a: (a.get("min_distance") if a.get("min_distance") is not None else 999, a.get("name") or ""),
+        key=lambda a: (_sev_rank.get(a.get("severity"), 3),
+                       a.get("min_distance") if a.get("min_distance") is not None else 999,
+                       a.get("name") or ""),
     )[:20]
+    high_count = sum(1 for a in affected.values() if a.get("severity") == "HIGH")
 
     return {
         "asset": {
@@ -479,6 +512,7 @@ def generate_impact_report(
         "change_description": change_description,
         "severity": severity,
         "distinct_downstream_assets": distinct,
+        "high_severity_count": high_count,
         "edge_count": len(edges),
         "affected_by_type": by_type,
         "top_affected": top_affected,

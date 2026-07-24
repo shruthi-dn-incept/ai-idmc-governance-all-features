@@ -1720,40 +1720,132 @@ function fmtPct(v) {
 
 // ── Phase 4: lineage renderers ────────────────────────────────────────────────
 
-function NodeChip({ name, type, location }) {
+// A CDGC core.location is origin://origin/…/<parent>/<parent>()/<node>. The
+// meaningful group header is the parent segment (the Databricks notebook / job
+// / schema), NOT the raw URI — that's what resolves the "every node is
+// Command 1" collision: the two Command 1 nodes sit under different parents
+// (02_Silver_Layer vs 03_Gold_Layer). Falls back to the origin tail when the
+// shape is unfamiliar.
+function locationGroup(loc, nodeName) {
+  if (!loc || typeof loc !== "string" || loc.indexOf("://") < 0) return "(ungrouped)";
+  const rest = loc.split("://")[1] || "";
+  let parts = rest.split("/").filter(Boolean);
+  // drop the leading origin uuid segment
+  if (parts.length) parts = parts.slice(1);
+  // drop the trailing node segment itself (it equals nodeName, e.g. "Command 1")
+  if (nodeName && parts.length && parts[parts.length - 1] === nodeName) parts = parts.slice(0, -1);
+  // a Databricks notebook repeats as "X" then "X()" — collapse to the name
+  let last = parts.length ? parts[parts.length - 1] : "";
+  last = last.replace(/\(\)$/, "");
+  if (!last && parts.length > 1) last = parts[parts.length - 2].replace(/\(\)$/, "");
+  return last || "(ungrouped)";
+}
+
+// Build {Upstream, Downstream} → {groupHeader → [nodes]} from flattened edges.
+// A node reachable up AND down appears in both branches — expected (CDGC does
+// the same). Each node carries the far end of its edge (the non-root side).
+function buildLineageTree(data) {
+  const rootId = data?.asset?.id;
+  const branch = (dir) => {
+    const groups = {};   // header -> { nodes: Map(id->node), minDist }
+    (data?.edges || []).forEach(e => {
+      if (e.direction !== dir) return;
+      // the "far" node is whichever end is not the root
+      const far = e.toId === rootId
+        ? { id: e.fromId, name: e.from, type: e.fromType, loc: e.fromLocation }
+        : { id: e.toId,   name: e.to,   type: e.toType,   loc: e.toLocation };
+      if (!far.id || far.id === rootId) return;
+      const header = locationGroup(far.loc, far.name);
+      const g = groups[header] || (groups[header] = { nodes: new Map(), minDist: 999 });
+      if (!g.nodes.has(far.id)) g.nodes.set(far.id, { ...far, dist: e.distance });
+      if (e.distance != null && e.distance < g.minDist) g.minDist = e.distance;
+    });
+    // ordered: nearest hop first, header alpha as tiebreak
+    return Object.entries(groups)
+      .map(([header, g]) => ({ header, minDist: g.minDist, nodes: [...g.nodes.values()] }))
+      .sort((a, b) => a.minDist - b.minDist || a.header.localeCompare(b.header));
+  };
+  const up = branch("inbound");    // inbound = upstream
+  const down = branch("outbound"); // outbound = downstream
+  const count = (bs) => bs.reduce((n, g) => n + g.nodes.length, 0);
+  return { up, down, upCount: count(up), downCount: count(down) };
+}
+
+function TypeTag({ type }) {
+  const t = (type || "").split(".").pop();
+  return t ? <span className="text-xs text-slate-400">{t}</span> : null;
+}
+
+// Reuses the DiscoverResult idea: one collapsed map keyed by path string, a
+// toggle, chevrons, SchemaTableList's 12-preview. Open-set lives in local
+// state so expanding never touches parent state or resets scroll. Everything
+// starts collapsed.
+function LineageBranch({ label, groups, count, pathPrefix, open, toggle }) {
+  const branchKey = pathPrefix;
+  const branchOpen = open.has(branchKey);
   return (
-    <span className="inline-flex flex-col bg-white border border-slate-200 rounded-lg px-2.5 py-1 max-w-[240px]" title={location || name}>
-      <span className="text-xs font-mono font-semibold text-slate-700 truncate">{name || "?"}</span>
-      <span className="text-xs text-slate-400 truncate">{(type || "").split(".").pop()}</span>
-    </span>
+    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+      <button onClick={() => toggle(branchKey)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{label} ({count})</span>
+        <span className="text-slate-400 text-sm">{branchOpen ? "▾" : "▸"}</span>
+      </button>
+      {branchOpen && (
+        <div className="divide-y divide-slate-50">
+          {groups.length === 0 && <div className="px-4 py-2 text-xs text-slate-400 italic">none</div>}
+          {groups.map(g => {
+            const gKey = `${pathPrefix}/${g.header}`;
+            const gOpen = open.has(gKey);
+            const PREVIEW = 12;
+            const shown = gOpen ? g.nodes : g.nodes.slice(0, PREVIEW);
+            return (
+              <div key={gKey}>
+                <button onClick={() => toggle(gKey)}
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-50 transition-colors text-left">
+                  <span className="text-slate-400 text-xs">{gOpen ? "▾" : "▸"}</span>
+                  <span className="text-xs font-semibold text-slate-700 truncate" title={g.header}>{g.header}</span>
+                  <span className="text-xs text-slate-400">({g.nodes.length})</span>
+                </button>
+                {gOpen && (
+                  <div className="pl-7 pr-3 pb-2 space-y-1">
+                    {shown.map(n => (
+                      <div key={n.id} className="flex items-center gap-2">
+                        <span className="w-1 h-1 rounded-full bg-indigo-300 inline-block shrink-0"/>
+                        <span className="text-xs font-mono text-slate-600 truncate" title={n.name}>{n.name}</span>
+                        <TypeTag type={n.type}/>
+                      </div>
+                    ))}
+                    {!gOpen && null}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
-// Node-and-edge grouped by hop distance — the differentiator is programmatic
-// access and severity classification, not graphics.
-function EdgeList({ edges }) {
-  const byDistance = {};
-  (edges || []).forEach(e => {
-    const d = e.distance ?? 1;
-    (byDistance[d] = byDistance[d] || []).push(e);
-  });
-  const distances = Object.keys(byDistance).map(Number).sort((a, b) => a - b);
+function LineageTree({ data }) {
+  const [open, setOpen] = React.useState(() => new Set());   // empty = all collapsed
+  const toggle = (k) => setOpen(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const t = buildLineageTree(data);
+  const total = (data?.edge_count ?? 0);
   return (
-    <div className="space-y-3">
-      {distances.map(d => (
-        <div key={d} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-          <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Hop {d}</div>
-          <div className="divide-y divide-slate-50">
-            {byDistance[d].map((e, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-2 flex-wrap">
-                <NodeChip name={e.from} type={e.fromType} location={e.fromLocation}/>
-                <span className="text-slate-400 text-sm shrink-0">→</span>
-                <NodeChip name={e.to} type={e.toType} location={e.toLocation}/>
-              </div>
-            ))}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-sm font-mono font-semibold text-slate-800 truncate" title={data?.asset?.name}>{data?.asset?.name || "—"}</span>
+        <span className="text-xs text-slate-400 shrink-0">{t.upCount} up · {t.downCount} down</span>
+      </div>
+      {total === 0
+        ? <LineageEmptyState assetName={data?.asset?.name}/>
+        : (
+          <div className="space-y-2">
+            <LineageBranch label="Upstream" groups={t.up} count={t.upCount} pathPrefix="up" open={open} toggle={toggle}/>
+            <LineageBranch label="Downstream" groups={t.down} count={t.downCount} pathPrefix="down" open={open} toggle={toggle}/>
           </div>
-        </div>
-      ))}
+        )}
     </div>
   );
 }
@@ -1777,48 +1869,35 @@ function LineageEmptyState({ assetName }) {
   );
 }
 
-function TraceLineageResult({ data }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Asset" value={data?.asset?.name || "—"} color="text-slate-700"/>
-        <SummaryCard label="Edges" value={data?.edge_count ?? 0}/>
-        <SummaryCard label="Connected assets" value={data?.distinct_nodes ?? 0}/>
-      </div>
-      {(data?.edge_count ?? 0) === 0
-        ? <LineageEmptyState assetName={data?.asset?.name}/>
-        : <EdgeList edges={data?.edges}/>}
-    </div>
-  );
-}
+// Left panel of step 2: the collapsible tree (see LineageTree above).
+function TraceLineageResult({ data }) { return <LineageTree data={data}/>; }
 
+// Right panel of step 2: DOWNSTREAM · HOPS · SEVERITY, per-asset severity from
+// the server (computed via _classify_severity), rows already sorted
+// highest-first by the tool; header carries the high-severity count.
 function ImpactReportResult({ data }) {
+  const rows = data?.top_affected || [];
+  const high = data?.high_severity_count
+    ?? rows.filter(r => (r.severity || "").toUpperCase() === "HIGH").length;
   return (
-    <div className="space-y-4">
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 px-1 flex-wrap">
         <SevBadge severity={data?.severity}/>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-800">{data?.distinct_downstream_assets ?? 0} downstream assets affected ({data?.edge_count ?? 0} edges)</div>
-          <div className="text-xs text-slate-500 mt-0.5">{data?.change_description}</div>
-        </div>
+        <span className="text-xs text-slate-500">{data?.distinct_downstream_assets ?? 0} downstream · <span className="text-red-600 font-semibold">{high} high-severity</span></span>
       </div>
-      {Object.keys(data?.affected_by_type || {}).length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(data.affected_by_type).map(([t, n]) => (
-            <span key={t} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-1 rounded-lg">{t.split(".").pop()} × {n}</span>
-          ))}
-        </div>
+      {data?.change_description && (
+        <div className="text-xs text-slate-400 px-1 italic truncate" title={data.change_description}>if changed: {data.change_description}</div>
       )}
       {(data?.distinct_downstream_assets ?? 0) === 0
         ? <LineageEmptyState assetName={data?.asset?.name}/>
         : (
           <DataTable
             columns={[
-              { key: "name", label: "Affected asset", render: r => <span className="font-mono font-semibold">{r.name || "?"}</span> },
-              { key: "classType", label: "Type", render: r => <span className="text-slate-500">{(r.classType || "").split(".").pop()}</span> },
-              { key: "min_distance", label: "Hops away" },
+              { key: "name", label: "Downstream", render: r => <span className="font-mono font-medium text-slate-700 truncate inline-block max-w-[220px]" title={r.name}>{r.name || "?"}</span> },
+              { key: "min_distance", label: "Hops", render: r => <span className="text-slate-500">{r.min_distance ?? "—"}</span> },
+              { key: "severity", label: "Severity", render: r => <SevBadge severity={r.severity}/> },
             ]}
-            rows={data?.top_affected || []}
+            rows={rows}
           />
         )}
     </div>
@@ -2503,7 +2582,7 @@ function App() {
   // propagate_dq_score (step 10) — the one substep that needs inputs
   const [propagateForm, setPropagateForm] = useState({ asset_name: "", score: "", dimension: "Accuracy" });
   // Step 2 lineage substeps (Phase 4)
-  const [lineageForm, setLineageForm] = useState({ asset_name: "", direction: "all", depth: 3, change_description: "" });
+  const [lineageForm, setLineageForm] = useState({ asset_name: "", direction: "all", depth: 5, change_description: "" });
   // Step 6 glossary substeps (Phase 5)
   const [glossForm, setGlossForm] = useState({ asset_name: "", domain_context: "", term_name: "", definition: "", category: "", synonyms: "", scan_scope: "all" });
   // Step 11 monitor (Phase 3) — entered cold; free text is the primary selector
@@ -4456,11 +4535,45 @@ function App() {
               </div>
             )}
 
+            {/* Step 2: Lineage (left) + Impact (right), side by side beneath the
+                column metadata table. Layout per the mock; built from index.html
+                components + theme. The other step-2 substep (find_data_source)
+                still renders in the generic panel list below. */}
+            {activeStep === "scan"
+              && ((subResults.scan || {}).trace_lineage !== undefined || (subResults.scan || {}).generate_impact_report !== undefined) && (
+              <div className="grid grid-cols-2 gap-4 items-start">
+                {[["trace_lineage", "Lineage"], ["generate_impact_report", "Impact if this changes"]].map(([key, label]) => {
+                  const data = (subResults.scan || {})[key];
+                  const R = SUB_RENDERERS[key];
+                  return (
+                    <div key={key} className="space-y-2">
+                      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</div>
+                      <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
+                        {data === undefined ? (
+                          <div className="text-xs text-slate-400 italic">Run <span className="font-mono">{key}</span> above to populate.</div>
+                        ) : data?.error ? (
+                          /no asset|not found|no results/i.test(String(data.error)) ? (
+                            <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-600 space-y-1">
+                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing — the asset may not be cataloged yet, or the name differs. Use the exact name shown in Discover.</div>
+                              <div className="text-slate-400 font-mono">{String(data.error).slice(0, 160)}</div>
+                            </div>
+                          ) : (
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{data.error}</pre></div>
+                          )
+                        ) : (R ? <R data={data}/> : <JsonViewer data={data}/>)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Substep results — steps whose parent result is not a substep map
                 render each tool's output in its own panel */}
             {Object.keys(subResults[activeStep] || {}).length > 0 && (
               <div className="space-y-3">
-                {(active.substeps || []).filter(ss => (subResults[activeStep] || {})[ss.key] !== undefined).map(ss => {
+                {(active.substeps || []).filter(ss => (subResults[activeStep] || {})[ss.key] !== undefined
+                    && !(activeStep === "scan" && (ss.key === "trace_lineage" || ss.key === "generate_impact_report"))).map(ss => {
                   const data = subResults[activeStep][ss.key];
                   const R = SUB_RENDERERS[ss.key];
                   return (
