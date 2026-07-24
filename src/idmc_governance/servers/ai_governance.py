@@ -1121,6 +1121,29 @@ def list_catalog_tables(
         for (cat_name, db_name, schema_name), tbls in all_tables.items():
             nested.setdefault(cat_name, {}).setdefault(db_name, {}).setdefault(schema_name, []).extend(tbls)
 
+        # Per-source last-scanned — the same 'Updated On' value MCC's own catalog
+        # sources list shows (lastModifiedTime). One cheap GET, best-effort: a
+        # failure or unmatched source just omits the header value, never breaks
+        # discover.
+        _scan_times: dict[str, str] = {}
+        try:
+            for it in _list_mcc_catalog_sources():
+                nm = (it.get("name") or it.get("sourceName") or "").strip()
+                ts = it.get("lastModifiedTime") or it.get("lastScanTime") or it.get("createdTime")
+                if nm and ts:
+                    _scan_times[nm.lower()] = ts
+        except Exception as exc:  # noqa: BLE001
+            log.info("discover: last-scanned lookup skipped: %s", exc)
+
+        def _last_scanned(name: str) -> str | None:
+            n = (name or "").lower()
+            if n in _scan_times:
+                return _scan_times[n]
+            for k, v in _scan_times.items():   # substring match, like _resolve_mcc_source_id
+                if n and (n in k or k in n):
+                    return v
+            return None
+
         catalog_sources_out = []
         for cat_name, db_dict in sorted(nested.items()):
             databases_out: list[dict] = []
@@ -1142,6 +1165,7 @@ def list_catalog_tables(
                 "databases":   databases_out,
                 "schemas":     schemas_flat,   # flat — used by scan dropdowns
                 "total_tables": total,
+                "last_scanned": _last_scanned(cat_name),
             })
         return {
             "catalog_sources_grouped": catalog_sources_out,
