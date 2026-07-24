@@ -2614,9 +2614,11 @@ function App() {
     return () => clearInterval(iv);
   }, [jobRuns]);
 
-  // Always-fresh results for derivations inside async callbacks.
+  // Always-fresh results/statuses for derivations inside async callbacks.
   const resultsRef = useRef(results);
   useEffect(() => { resultsRef.current = results; });
+  const statusesRef = useRef(statuses);
+  useEffect(() => { statusesRef.current = statuses; });
 
   useEffect(() => {
     notifySessionExpired = (msg) => setSessionExpired(msg);
@@ -2940,8 +2942,9 @@ function App() {
         if (!items.length) {
           setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: 0, approved: [] } }));
           setStatus(stepId, STATUS.done);
+          return "done";
         }
-        return;
+        return "gate";
       }
       else if (stepId === "schedule_execution") data = await apiPost("/api/step/schedule_execution", {}, sig);
       else if (stepId === "domain_structure") {
@@ -2955,7 +2958,7 @@ function App() {
           setDomainRenames({});
           abortRef.current = null;
           setStatus(stepId, STATUS.idle);
-          return;
+          return "gate";
         }
         data = preview;
       }
@@ -2979,7 +2982,7 @@ function App() {
           setCurSelected(new Set(items.map(it => it.name)));
           abortRef.current = null;
           setStatus(stepId, STATUS.idle);
-          return;
+          return "gate";
         }
         data = { ...out, applied: { linked: 0, skipped: 0, errors: [] }, note: "No links proposed by the matcher." };
       }
@@ -3024,12 +3027,101 @@ function App() {
       }
       if (errMsg) setErrors(prev => ({ ...prev, [stepId]: errMsg }));
       setStatus(stepId, isFailed ? STATUS.error : STATUS.done);
+      return isFailed ? "error" : "done";
     } catch (err) {
-      if (err.name === "AbortError") return;
+      if (err.name === "AbortError") return "aborted";
       setErrors(prev => ({ ...prev, [stepId]: err.message }));
       setStatus(stepId, STATUS.error);
+      return "error";
     }
   }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode]);
+
+  // ── Run-all control ─────────────────────────────────────────────────────────
+  // A small secondary control, not a primary CTA. Walks the ladder top to
+  // bottom, skipping steps already done, and HALTS at every review gate — the
+  // behaviour that distinguishes it from a freeform agent. An orchestrator that
+  // blows past an approval gate disproves the exact argument the gates make.
+  // It never calls auto_approve_access. Across the marketplace span it calls
+  // publish_marketplace_full (steps 12+13 in one request), deriving both dots
+  // independently from the per-tool outcomes.
+  const [runAll, setRunAll] = useState(null);   // {running, at, halted, note}
+  const runAllRef = useRef(false);
+
+  const stopRunAll = useCallback(() => {
+    runAllRef.current = false;
+    setRunAll(r => r ? { ...r, running: false, note: "stopped — the current step finishes, nothing further runs" } : r);
+  }, []);
+
+  const startRunAll = useCallback(async () => {
+    if (runAllRef.current) return;
+    runAllRef.current = true;
+    setRunAll({ running: true, at: null, halted: null, note: null });
+    const halt = (stepId, note) => {
+      runAllRef.current = false;
+      setRunAll({ running: false, at: stepId, halted: stepId, note });
+    };
+    try {
+      for (const step of STEPS) {
+        if (!runAllRef.current) return;
+        const st = statusesRef.current[step.id];
+        if (st === STATUS.done || st === STATUS.skipped) continue;   // resume-after-gate for free
+        if (step.id === "publish_marketplace") continue;             // covered by the 12+13 span
+        setActiveStep(step.id);
+        setRunAll(r => ({ ...r, at: step.id }));
+
+        // Preconditions the runner cannot invent — halt with the fix named.
+        if (step.id === "scan" && !(scanSchema && scanTable)) {
+          return halt("scan", "select a schema and table at step 2, then press Run all again");
+        }
+        if (step.id === "monitor_quality" && !monitorForm.asset_name) {
+          setStatus("monitor_quality", STATUS.skipped);
+          continue;   // monitoring is a cold-entry read — skipping is honest, not a failure
+        }
+
+        if (step.id === "create_collection") {
+          // Marketplace span: one request covers steps 12 and 13; link runs last
+          // so the silent-link defect cannot come back through the orchestrator.
+          try {
+            const full = await apiPost("/api/step/publish_marketplace_full", {});
+            let link = null;
+            try { link = await apiPost("/api/step/link_asset_to_collection", {}); }
+            catch (e) { link = { status: "failed", error: e.message }; }
+            const map12 = { category: full.category, data_asset: full.data_asset, collection: full.collection, link };
+            setResults(prev => ({ ...prev, create_collection: map12, publish_marketplace: full.publish }));
+            const c12 = compositeFailure(STEPS.find(s => s.id === "create_collection"), map12);
+            setStatuses(prev => ({ ...prev, create_collection: c12 ? STATUS.error : STATUS.done }));
+            if (c12) setErrors(prev => ({ ...prev, create_collection: c12 }));
+            const pubFail = toolOutcomeFailed(full.publish);
+            setStatuses(prev => ({ ...prev, publish_marketplace: pubFail ? STATUS.error : STATUS.done }));
+            if (c12 || pubFail) return halt(step.id, "marketplace span reported failures — the rows carry the detail");
+          } catch (e) {
+            setErrors(prev => ({ ...prev, create_collection: e.message }));
+            setStatuses(prev => ({ ...prev, create_collection: STATUS.error }));
+            return halt(step.id, e.message);
+          }
+          continue;
+        }
+
+        const outcome = await runStep(step.id);
+        if (outcome === "gate") {
+          return halt(step.id, "review gate open — approve (or adjust the selection), then press Run all to continue");
+        }
+        if (outcome === "error" || outcome === "aborted") {
+          return halt(step.id, outcome === "aborted" ? "stopped" : "step failed — see its error panel");
+        }
+        if (step.id === "consumer_access") {
+          // Gates 4/5 are human decisions. The run never clicks through them
+          // and never calls auto_approve_access.
+          return halt(step.id, "order placed — approve and withdraw are gated human actions (Gates 4 and 5)");
+        }
+      }
+      runAllRef.current = false;
+      setRunAll({ running: false, at: null, halted: null, note: "ladder complete" });
+    } finally {
+      runAllRef.current = false;
+      setRunAll(r => r && r.running ? { ...r, running: false } : r);
+    }
+  }, [runStep, scanSchema, scanTable, monitorForm]);
 
   // Gate 2 approve: writes exactly the approved column-to-term links.
   const approveCuration = useCallback(async () => {
@@ -3266,6 +3358,11 @@ function App() {
             title="Clear session (server + browser) and start fresh"
           >↺ New Session</button>
           <button
+            onClick={() => runAll?.running ? stopRunAll() : startRunAll()}
+            className="text-xs text-slate-500 hover:text-brand font-medium"
+            title="Runs the ladder top to bottom, skipping completed steps — and halts at every review gate. Never auto-approves."
+          >{runAll?.running ? "■ Stop run-all" : "▶ Run all"}</button>
+          <button
             onClick={() => setSettingsOpen(true)}
             className="text-slate-400 hover:text-slate-600 text-lg leading-none transition-colors"
             title="Settings — org-scoped actions (export / import, approval policy)"
@@ -3275,6 +3372,24 @@ function App() {
       </header>
 
       <SessionExpiredBanner message={sessionExpired} onDismiss={() => setSessionExpired(null)}/>
+
+      {/* Run-all status strip — running (indigo) / halted at a gate (amber) */}
+      {runAll && (runAll.running || runAll.note) && (
+        <div className={`px-6 py-2 border-b flex items-center gap-3 shrink-0 text-xs font-medium
+          ${runAll.running ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+          {runAll.running && <Spinner/>}
+          <span>
+            {runAll.running
+              ? `Run-all: at ${(STEPS.find(s => s.id === runAll.at) || {}).label || "…"}`
+              : runAll.halted
+                ? `Run-all halted at ${(STEPS.find(s => s.id === runAll.halted) || {}).label || runAll.halted} — ${runAll.note}`
+                : `Run-all: ${runAll.note}`}
+          </span>
+          {!runAll.running && (
+            <button onClick={() => setRunAll(null)} className="ml-auto text-xs px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100">Dismiss</button>
+          )}
+        </div>
+      )}
 
       {/* Settings slide-over — org-scoped actions live here, not on the ladder.
           A settings panel is not navigation: no status dot, no ladder position,
