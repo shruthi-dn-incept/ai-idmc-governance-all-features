@@ -64,11 +64,11 @@ const STEPS = [
       { tool: "list_connections", key: "list_connections", route: null, note: "Next release (Phase 6)" },
     ] },
   { id: "scan", num: 2, label: "Scan Table", icon: "◈", route: "/api/step/scan",
-    desc: "Select a table and fetch its column metadata (cached after first run).",
+    desc: "Select a table and fetch its column metadata (cached after first run). Provenance questions — where does this table come from, what breaks if I change it — are answered here, next to the columns.",
     substeps: [
-      { tool: "trace_lineage",          key: "trace_lineage",          route: null, note: "Next release (Phase 4)" },
-      { tool: "generate_impact_report", key: "generate_impact_report", route: null, note: "Next release (Phase 4)" },
-      { tool: "find_data_source",       key: "find_data_source",       route: null, note: "Next release (Phase 4)" },
+      { tool: "trace_lineage",          key: "trace_lineage",          route: "/api/step/trace_lineage",          form: "lineage" },
+      { tool: "generate_impact_report", key: "generate_impact_report", route: "/api/step/generate_impact_report", form: "impact" },
+      { tool: "find_data_source",       key: "find_data_source",       route: "/api/step/find_data_source",       form: "source" },
     ] },
   { id: "profile", num: 3, label: "Profile Data", icon: "◍", route: "/api/step/profile",
     stub: true, stubPhase: "Phase 1",
@@ -93,9 +93,9 @@ const STEPS = [
   { id: "curate", num: 6, label: "Curate Columns", icon: "◩", route: "/api/step/curate", gate: true, gatePhase: "Phase 5",
     desc: "Link every column to its matching business term.",
     substeps: [
-      { tool: "suggest_terms_for_asset", key: "suggest_terms_for_asset", route: null, note: "Next release (Phase 5)" },
-      { tool: "create_glossary_term",    key: "create_glossary_term",    route: null, note: "Next release (Phase 5)" },
-      { tool: "detect_glossary_issues",  key: "detect_glossary_issues",  route: null, note: "Next release (Phase 5)" },
+      { tool: "suggest_terms_for_asset", key: "suggest_terms_for_asset", route: "/api/step/suggest_terms_for_asset", form: "suggest" },
+      { tool: "create_glossary_term",    key: "create_glossary_term",    route: "/api/step/create_glossary_term",    form: "term" },
+      { tool: "detect_glossary_issues",  key: "detect_glossary_issues",  route: "/api/step/detect_glossary_issues",  form: "health" },
     ] },
   { id: "recommend_rules", num: 7, label: "Recommend Rules", icon: "❋", route: "/api/step/recommend_rules",
     stub: true, stubPhase: "Phase 1", gate: true,
@@ -131,13 +131,12 @@ const STEPS = [
       { tool: "propagate_dq_score",  key: "propagate_dq_score", route: "/api/step/propagate_dq_score", form: "propagate" },
     ] },
   { id: "monitor_quality", num: 11, label: "Monitor Quality", icon: "◔", route: "/api/step/monitor_quality",
-    stub: true, stubPhase: "Phase 3",
-    desc: "Scorecards, trends, degradation alerts and remediation guidance for published assets.",
+    desc: "Scorecards, trends, degradation alerts and remediation guidance. Entered cold — the asset selector needs no upstream run.",
     substeps: [
-      { tool: "get_dq_scores",         key: "get_dq_scores",         route: null, note: "Next release (Phase 3)" },
-      { tool: "check_score_trends",    key: "check_score_trends",    route: null, note: "Next release (Phase 3)" },
-      { tool: "recommend_remediation", key: "recommend_remediation", route: null, note: "Next release (Phase 3)" },
-      { tool: "alert_on_degradation",  key: "alert_on_degradation",  route: null, note: "Next release (Phase 3)" },
+      { tool: "get_dq_scores",         key: "monitor_quality",       parent: true },
+      { tool: "check_score_trends",    key: "check_score_trends",    route: "/api/step/check_score_trends",    form: "trends" },
+      { tool: "recommend_remediation", key: "recommend_remediation", route: "/api/step/recommend_remediation", form: "remediation" },
+      { tool: "alert_on_degradation",  key: "alert_on_degradation",  route: "/api/step/alert_on_degradation",  form: "alert" },
     ] },
   { id: "create_collection", num: 12, label: "Create Collection", icon: "◈", route: "/api/step/create_collection",
     substepsInParent: true,
@@ -218,6 +217,8 @@ function compositeFailure(stepDef, data) {
   if (!failed.length) return null;
   return `${failed.length} of ${keys.length} tools failed: ${failed.join(", ")} — the rows below carry the detail`;
 }
+
+const INPUT_CLS = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100";
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -1629,6 +1630,408 @@ function PublishGovernanceResult({ data }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Day-2 shared bits (Phases 4/5/3)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function DimChip({ dim }) {
+  return <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs">{dim || "—"}</span>;
+}
+
+function SevBadge({ severity }) {
+  const s = (severity || "").toUpperCase();
+  const cls = s === "HIGH"   ? "bg-red-100 text-red-700 border-red-300"
+            : s === "MEDIUM" ? "bg-amber-100 text-amber-700 border-amber-300"
+            :                  "bg-emerald-100 text-emerald-700 border-emerald-300";
+  return <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cls}`}>{s || "LOW"}</span>;
+}
+
+function DataTable({ columns, rows, empty }) {
+  if (!rows || rows.length === 0) return empty || <div className="text-xs text-slate-400 italic p-3">No entries.</div>;
+  return (
+    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-100 text-slate-500 uppercase tracking-wider">
+          <tr>{columns.map(c => <th key={c.key} className="px-3 py-2 text-left whitespace-nowrap">{c.label}</th>)}</tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {rows.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              {columns.map(c => <td key={c.key} className="px-3 py-2 text-slate-700 align-top">{c.render ? c.render(r) : (r[c.key] ?? "—")}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function fmtPct(v) {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return (n <= 1 ? n * 100 : n).toFixed(1) + "%";
+}
+
+// ── Phase 4: lineage renderers ────────────────────────────────────────────────
+
+function NodeChip({ name, type, location }) {
+  return (
+    <span className="inline-flex flex-col bg-white border border-slate-200 rounded-lg px-2.5 py-1 max-w-[240px]" title={location || name}>
+      <span className="text-xs font-mono font-semibold text-slate-700 truncate">{name || "?"}</span>
+      <span className="text-xs text-slate-400 truncate">{(type || "").split(".").pop()}</span>
+    </span>
+  );
+}
+
+// Node-and-edge grouped by hop distance — the differentiator is programmatic
+// access and severity classification, not graphics.
+function EdgeList({ edges }) {
+  const byDistance = {};
+  (edges || []).forEach(e => {
+    const d = e.distance ?? 1;
+    (byDistance[d] = byDistance[d] || []).push(e);
+  });
+  const distances = Object.keys(byDistance).map(Number).sort((a, b) => a - b);
+  return (
+    <div className="space-y-3">
+      {distances.map(d => (
+        <div key={d} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Hop {d}</div>
+          <div className="divide-y divide-slate-50">
+            {byDistance[d].map((e, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2 flex-wrap">
+                <NodeChip name={e.from} type={e.fromType} location={e.fromLocation}/>
+                <span className="text-slate-400 text-sm shrink-0">→</span>
+                <NodeChip name={e.to} type={e.toType} location={e.toLocation}/>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Empty lineage is a legitimate state with TWO causes needing different fixes —
+// and neither is fixed by advancing the ladder, so no "run a scan" button here.
+function LineageEmptyState({ assetName }) {
+  return (
+    <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
+      <span className="text-2xl">⬡</span>
+      <div>
+        <div className="text-sm font-semibold text-slate-700">No dataflow cataloged for {assetName || "this asset"}</div>
+        <div className="text-xs text-slate-500 mt-1 leading-relaxed">
+          Two possible causes, needing different fixes: <strong>Relationship Discovery has not run</strong> on
+          this catalog source (enable and run it in Metadata Command Center), or it has run and
+          <strong> no CDI mappings touch this asset</strong> — there is no dataflow to derive. Lineage comes from
+          the upfront catalog scan; nothing on this ladder produces it. Demo against an asset with real lineage.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TraceLineageResult({ data }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Asset" value={data?.asset?.name || "—"} color="text-slate-700"/>
+        <SummaryCard label="Edges" value={data?.edge_count ?? 0}/>
+        <SummaryCard label="Connected assets" value={data?.distinct_nodes ?? 0}/>
+      </div>
+      {(data?.edge_count ?? 0) === 0
+        ? <LineageEmptyState assetName={data?.asset?.name}/>
+        : <EdgeList edges={data?.edges}/>}
+    </div>
+  );
+}
+
+function ImpactReportResult({ data }) {
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4">
+        <SevBadge severity={data?.severity}/>
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-slate-800">{data?.distinct_downstream_assets ?? 0} downstream assets affected ({data?.edge_count ?? 0} edges)</div>
+          <div className="text-xs text-slate-500 mt-0.5">{data?.change_description}</div>
+        </div>
+      </div>
+      {Object.keys(data?.affected_by_type || {}).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(data.affected_by_type).map(([t, n]) => (
+            <span key={t} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-1 rounded-lg">{t.split(".").pop()} × {n}</span>
+          ))}
+        </div>
+      )}
+      {(data?.distinct_downstream_assets ?? 0) === 0
+        ? <LineageEmptyState assetName={data?.asset?.name}/>
+        : (
+          <DataTable
+            columns={[
+              { key: "name", label: "Affected asset", render: r => <span className="font-mono font-semibold">{r.name || "?"}</span> },
+              { key: "classType", label: "Type", render: r => <span className="text-slate-500">{(r.classType || "").split(".").pop()}</span> },
+              { key: "min_distance", label: "Hops away" },
+            ]}
+            rows={data?.top_affected || []}
+          />
+        )}
+    </div>
+  );
+}
+
+function FindSourceResult({ data }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Root sources" value={data?.root_count ?? 0}/>
+        <SummaryCard label="Source systems" value={(data?.source_systems || []).length}/>
+        <SummaryCard label="Edges walked" value={data?.edge_count ?? 0} color="text-slate-500"/>
+      </div>
+      {(data?.source_systems || []).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {data.source_systems.map(s => <span key={s} className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-lg font-semibold">⬢ {s}</span>)}
+        </div>
+      )}
+      {(data?.root_count ?? 0) === 0
+        ? <LineageEmptyState assetName={data?.asset?.name}/>
+        : (
+          <DataTable
+            columns={[
+              { key: "name", label: "Root asset", render: r => <span className="font-mono font-semibold">{r.name || "?"}</span> },
+              { key: "source_system", label: "Source system", render: r => r.source_system ? <span className="text-emerald-600 font-medium">{r.source_system}</span> : <span className="text-slate-400">unknown</span> },
+              { key: "classType", label: "Type", render: r => <span className="text-slate-500">{(r.classType || "").split(".").pop()}</span> },
+              { key: "max_distance", label: "Hops upstream" },
+            ]}
+            rows={data?.root_sources || []}
+          />
+        )}
+    </div>
+  );
+}
+
+// ── Phase 5: glossary renderers ───────────────────────────────────────────────
+
+function SuggestTermsResult({ data }) {
+  const suggestions = data?.suggestions || [];
+  if (!suggestions.length) return (
+    <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">
+      {data?.note || "No columns found to derive terms from — the asset may not be cataloged, or exposes no column metadata. Scan it first, then retry."}
+    </div>
+  );
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <SummaryCard label="Asset" value={data?.asset || "—"} color="text-slate-700"/>
+        <SummaryCard label="Suggestions" value={suggestions.length}/>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto scrollbar-thin">
+        {suggestions.map((s, i) => (
+          <div key={i} className="px-4 py-2.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-slate-800">{s.suggested_term}</span>
+              <span className="text-xs text-slate-400 font-mono">← {s.source_column}</span>
+              {s.confidence != null && <span className="text-xs text-slate-400">{fmtPct(s.confidence)} confidence</span>}
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">{s.definition}</div>
+          </div>
+        ))}
+      </div>
+      <div className="text-xs text-slate-400">To write one of these to CDGC, copy it into the create_glossary_term fields above — creation stays an explicit act, not a side effect of suggesting.</div>
+    </div>
+  );
+}
+
+function CreateTermResult({ data }) {
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
+      <div>✓ <strong>{data?.name}</strong> created in CDGC — id <span className="font-mono">{data?.id || "?"}</span></div>
+      {data?.category && <div className="text-emerald-700">parent: {data.category}</div>}
+      {(data?.synonyms || []).length > 0 && <div className="text-emerald-700">synonyms: {data.synonyms.join(", ")}</div>}
+    </div>
+  );
+}
+
+function GlossaryHealthResult({ data }) {
+  const dup = data?.duplicates || [], orp = data?.orphans || [], gaps = data?.gaps || [];
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-3">
+        <SummaryCard label="Terms scanned" value={data?.term_count ?? 0}/>
+        <SummaryCard label="Duplicates" value={dup.length} color={dup.length ? "text-red-600" : "text-emerald-600"}/>
+        <SummaryCard label="Orphans" value={orp.length} color={orp.length ? "text-amber-600" : "text-emerald-600"}/>
+        <SummaryCard label="Definition gaps" value={gaps.length} color={gaps.length ? "text-amber-600" : "text-emerald-600"}/>
+      </div>
+      {dup.length > 0 && (
+        <div className="border border-red-200 rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs font-semibold text-red-600 uppercase tracking-wider">Duplicate names — merge candidates</div>
+          <div className="divide-y divide-slate-50">
+            {dup.map((d, i) => (
+              <div key={i} className="px-4 py-2 flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-700">{d.name}</span>
+                <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">× {d.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {orp.length > 0 && (
+        <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Orphaned terms — no relationships (first 50 terms checked)</div>
+          <div className="p-3 flex flex-wrap gap-1.5">
+            {orp.map((o, i) => <span key={i} className="text-xs bg-slate-100 border border-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">{o.name}</span>)}
+          </div>
+        </div>
+      )}
+      {gaps.length > 0 && (
+        <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Definition gaps</div>
+          <div className="divide-y divide-slate-50">
+            {gaps.map((g, i) => (
+              <div key={i} className="px-4 py-2 flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-700 flex-1 truncate">{g.name}</span>
+                <span className="text-xs text-slate-400">{g.reason} ({g.definition_length} chars)</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!dup.length && !orp.length && !gaps.length && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm font-semibold text-emerald-800">✓ Glossary is healthy — no duplicates, orphans or definition gaps in the scanned sample.</div>
+      )}
+    </div>
+  );
+}
+
+// ── Phase 3: monitoring renderers ─────────────────────────────────────────────
+
+function ScorecardResult({ data }) {
+  const composite = data?.composite;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Composite score" value={composite != null ? composite.toFixed(1) + "%" : "—"}
+          color={composite == null ? "text-slate-400" : composite >= 90 ? "text-emerald-600" : composite >= 70 ? "text-amber-600" : "text-red-600"}/>
+        <SummaryCard label="Rules scored" value={data?.score_count ?? 0}/>
+        <SummaryCard label="Dimensions" value={(data?.dimensions || []).length}/>
+      </div>
+      {(data?.score_count ?? 0) === 0 ? (
+        <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
+          <span className="text-2xl">⏱</span>
+          <div>
+            <div className="text-sm font-semibold text-slate-700">No scores on this asset yet — possibly awaiting catalog rollup</div>
+            <div className="text-xs text-slate-500 mt-1 leading-relaxed">
+              CDGC rolls uploaded scores into the asset scorecard asynchronously — a score published at step 10
+              moments ago may not appear yet. Re-check in a few minutes. Otherwise verify rule occurrences are
+              registered against this asset (step 8).
+            </div>
+          </div>
+        </div>
+      ) : (
+        <DataTable
+          columns={[
+            { key: "rule", label: "Rule", render: r => <span className="font-mono">{r.rule}</span> },
+            { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
+            { key: "value", label: "Score", render: r => <span className={`font-bold ${Number(r.value) >= 90 ? "text-emerald-600" : Number(r.value) >= 70 ? "text-amber-600" : "text-red-600"}`}>{r.value != null && r.value !== "" ? `${r.value}%` : "—"}</span> },
+            { key: "rule_count", label: "Rules", render: r => r.rule_count ?? (r.exception != null ? `${r.exception} exc` : "—") },
+            { key: "score_trend", label: "Trend", render: r => r.score_trend == null ? "—" : <span className={r.score_trend < 0 ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>{r.score_trend > 0 ? "+" : ""}{r.score_trend}</span> },
+            { key: "lastRun", label: "Last run", render: r => {
+                const t = Number(r.lastRun);
+                return r.lastRun ? (Number.isFinite(t) && t > 1e12 ? new Date(t).toISOString().slice(0, 10) : String(r.lastRun)) : "—";
+              } },
+          ]}
+          rows={data?.scores || []}
+        />
+      )}
+    </div>
+  );
+}
+
+function TrendRow({ entry, tone }) {
+  const color = tone === "down" ? "text-red-600" : tone === "up" ? "text-emerald-600" : "text-slate-500";
+  const bar   = tone === "down" ? "bg-red-400"   : tone === "up" ? "bg-emerald-400"   : "bg-slate-300";
+  const width = Math.min(Math.abs(entry.delta || 0) * 2, 100);
+  return (
+    <div className="flex items-center gap-3 px-3 py-2">
+      <span className="text-xs font-mono text-slate-600 w-56 truncate shrink-0" title={entry.rule}>{entry.rule}</span>
+      <span className="text-xs text-slate-400 shrink-0">{Number(entry.first).toFixed(0)} → {Number(entry.last).toFixed(0)}</span>
+      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${bar}`} style={{ width: `${width}%` }}/></div>
+      <span className={`text-xs font-bold w-14 text-right shrink-0 ${color}`}>{entry.delta > 0 ? "+" : ""}{Number(entry.delta).toFixed(1)}</span>
+      <span className="text-xs text-slate-300 shrink-0">{entry.points} pts</span>
+    </div>
+  );
+}
+
+function TrendsResult({ data }) {
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend — last {data?.lookback_days} days (threshold ±{data?.threshold})</span>
+        <div className="flex gap-3 text-xs">
+          <span className="text-red-600 font-semibold">{(data?.degrading || []).length} degrading</span>
+          <span className="text-emerald-600 font-semibold">{(data?.improving || []).length} improving</span>
+          <span className="text-slate-500">{(data?.stable || []).length} stable</span>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-50">
+        {(data?.degrading || []).map((e, i) => <TrendRow key={"d" + i} entry={e} tone="down"/>)}
+        {(data?.improving || []).map((e, i) => <TrendRow key={"i" + i} entry={e} tone="up"/>)}
+        {(data?.stable || []).map((e, i) => <TrendRow key={"s" + i} entry={e} tone="flat"/>)}
+        {(data?.no_history || []).length > 0 && (
+          <div className="px-4 py-2 text-xs text-slate-400 italic">
+            {(data?.no_history || []).length} rule(s) have fewer than 2 trend points — a trend needs at least two scans (backfill with propagate_dq_score on step 10).
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RemediationResult({ data }) {
+  const seeds = data?.suggestion_seeds || [];
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <SummaryCard label="Rules" value={data?.summary?.rule_count ?? 0}/>
+        <SummaryCard label="Failing" value={data?.summary?.failing_rule_count ?? 0} color={data?.summary?.failing_rule_count ? "text-red-600" : "text-emerald-600"}/>
+        <SummaryCard label="Exceptions" value={data?.summary?.total_exceptions ?? 0} color="text-slate-600"/>
+      </div>
+      {seeds.length === 0
+        ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ All rules healthy — nothing to remediate.</div>
+        : (
+          <div className="border border-slate-200 rounded-xl bg-white divide-y divide-slate-100 overflow-hidden">
+            {seeds.map((s, i) => (
+              <div key={i} className="px-4 py-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono font-semibold text-slate-700">{s.rule}</span>
+                  <DimChip dim={s.dimension}/>
+                  {s.exception != null && <span className="text-xs text-red-500">{s.exception} exceptions</span>}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">→ {s.suggested_focus}</div>
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function AlertResult({ data }) {
+  const a = data?.this_alert || {};
+  return (
+    <div className="space-y-3">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+        ✓ Alert <span className="font-mono">{data?.id}</span> registered — <strong>{a.asset_name}</strong>: drop ≥ {a.threshold} pts over {a.lookback_days}d → notify {a.notify_email}
+      </div>
+      {/* Informational, not a warning — and be precise about where the alert lives */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-700">
+        Threshold is stored by <strong>this platform</strong> ({data?.total_alerts} alert{data?.total_alerts === 1 ? "" : "s"} configured) and evaluated by our
+        scheduler — CDGC exposes no alert-registration API. If asked where the alert lives, this is the answer.
+      </div>
+    </div>
+  );
+}
+
 const RESULT_RENDERERS = {
   discover:           DiscoverResult,
   scan:               ScanResult,
@@ -1641,6 +2044,7 @@ const RESULT_RENDERERS = {
   publish_marketplace: PublishMarketplaceFullResult,
   configure_delivery:  ConfigureDeliveryResult,
   consumer_access:     ConsumerAccessResult,
+  monitor_quality:     ScorecardResult,
 };
 
 // Renderers for substep results that live outside a composite parent map.
@@ -1650,6 +2054,15 @@ const SUB_RENDERERS = {
   scores:          ScoresResult,
   verify_access:   VerifyAccessResult,
   withdraw_access: WithdrawAccessResult,
+  trace_lineage:            TraceLineageResult,
+  generate_impact_report:   ImpactReportResult,
+  find_data_source:         FindSourceResult,
+  suggest_terms_for_asset:  SuggestTermsResult,
+  create_glossary_term:     CreateTermResult,
+  detect_glossary_issues:   GlossaryHealthResult,
+  check_score_trends:       TrendsResult,
+  recommend_remediation:    RemediationResult,
+  alert_on_degradation:     AlertResult,
 };
 
 function SessionExpiredBanner({ message, onDismiss }) {
@@ -1755,6 +2168,12 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // propagate_dq_score (step 10) — the one substep that needs inputs
   const [propagateForm, setPropagateForm] = useState({ asset_name: "", score: "", dimension: "Accuracy" });
+  // Step 2 lineage substeps (Phase 4)
+  const [lineageForm, setLineageForm] = useState({ asset_name: "", direction: "all", depth: 3, change_description: "" });
+  // Step 6 glossary substeps (Phase 5)
+  const [glossForm, setGlossForm] = useState({ asset_name: "", domain_context: "", term_name: "", definition: "", category: "", synonyms: "", scan_scope: "all" });
+  // Step 11 monitor (Phase 3) — entered cold; free text is the primary selector
+  const [monitorForm, setMonitorForm] = useState({ asset_name: "", lookback_days: "30", threshold: "10", notify_email: "" });
   const [sessionExpired, setSessionExpired] = useState(null);
 
   // Always-fresh results for derivations inside async callbacks.
@@ -1819,6 +2238,11 @@ function App() {
   // so their existing renderers keep reading the same keys; everything else
   // goes to subResults[stepId] and renders in its own panel below the result.
   const runSubAction = useCallback(async (step, ss) => {
+    // Default asset: the selected/scanned table — every selector degrades to text.
+    const scannedNow = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+    const defaultAsset = (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scannedNow[0] || "";
+    const lineageAsset = lineageForm.asset_name || defaultAsset;
+    const glossAsset   = glossForm.asset_name || defaultAsset;
     let body = {};
     if (ss.form === "propagate") {
       if (!propagateForm.asset_name || propagateForm.score === "") return;
@@ -1827,6 +2251,45 @@ function App() {
         score:      parseFloat(propagateForm.score),
         dimension:  propagateForm.dimension,
       };
+    }
+    else if (ss.form === "lineage") {
+      if (!lineageAsset) return;
+      body = { asset_name: lineageAsset, direction: lineageForm.direction, depth: lineageForm.depth };
+    }
+    else if (ss.form === "impact") {
+      if (!lineageAsset) return;
+      body = { asset_name: lineageAsset, change_description: lineageForm.change_description, depth: lineageForm.depth };
+    }
+    else if (ss.form === "source") {
+      if (!lineageAsset) return;
+      body = { asset_name: lineageAsset, depth: 5 };
+    }
+    else if (ss.form === "suggest") {
+      if (!glossAsset) return;
+      body = { asset_name: glossAsset };
+      if (glossForm.domain_context) body.domain_context = glossForm.domain_context;
+    }
+    else if (ss.form === "term") {
+      if (!glossForm.term_name || !glossForm.definition) return;
+      body = { term_name: glossForm.term_name, definition: glossForm.definition };
+      if (glossForm.category) body.category = glossForm.category;
+      if (glossForm.synonyms) body.synonyms = glossForm.synonyms.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    else if (ss.form === "health") {
+      body = { scan_scope: glossForm.scan_scope };
+    }
+    else if (ss.form === "trends") {
+      if (!monitorForm.asset_name) return;
+      body = { asset_name: monitorForm.asset_name, lookback_days: parseInt(monitorForm.lookback_days, 10) || 30 };
+    }
+    else if (ss.form === "remediation") {
+      if (!monitorForm.asset_name) return;
+      body = { asset_name: monitorForm.asset_name };
+    }
+    else if (ss.form === "alert") {
+      if (!monitorForm.asset_name || !monitorForm.threshold || !monitorForm.notify_email) return;
+      body = { asset_name: monitorForm.asset_name, threshold: parseFloat(monitorForm.threshold),
+               notify_email: monitorForm.notify_email, lookback_days: parseInt(monitorForm.lookback_days, 10) || 30 };
     }
     setSubRunning(prev => ({ ...prev, [ss.key]: true }));
     setErrors(prev => ({ ...prev, [step.id]: null }));
@@ -1851,7 +2314,7 @@ function App() {
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
-  }, [propagateForm]);
+  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable]);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -1937,6 +2400,11 @@ function App() {
       // stays server-side for the run-all path but no ladder step calls it.
       else if (stepId === "data_quality")      data = await apiPost("/api/step/dq_rules", {}, sig);
       else if (stepId === "publish_governance")    data = await apiPost("/api/step/mcc_scan", {}, sig);
+      else if (stepId === "monitor_quality") {
+        // Entered cold by design — the selector inherits nothing.
+        if (!monitorForm.asset_name) throw new Error("Enter an asset name above — Monitor Quality inherits no upstream selection.");
+        data = await apiPost("/api/step/monitor_quality", { asset_name: monitorForm.asset_name }, sig);
+      }
       else if (stepId === "create_collection")     data = await apiPost("/api/step/create_collection", {}, sig);
       else if (stepId === "publish_marketplace")   data = await apiPost("/api/step/publish_marketplace", {}, sig);
       else if (stepId === "configure_delivery")    data = await apiPost("/api/step/configure_delivery", {}, sig);
@@ -1973,7 +2441,7 @@ function App() {
       setErrors(prev => ({ ...prev, [stepId]: err.message }));
       setStatus(stepId, STATUS.error);
     }
-  }, [scanTable, scanSchema, scanSource]);
+  }, [scanTable, scanSchema, scanSource, monitorForm]);
 
   const approveDomainStructure = useCallback(async () => {
     setDomainApproving(true);
@@ -2116,7 +2584,23 @@ function App() {
   const taxonomyReady = statuses["taxonomy"] === STATUS.done || !!results.taxonomy;
   const canRun = (activeStep !== "scan" || (scanSchema && scanTable))
               && (activeStep !== "marketplace" || marketplaceCollectionId)
+              && (activeStep !== "monitor_quality" || !!monitorForm.asset_name)
               && (activeStep !== "domain_structure" || taxonomyReady);
+
+  // Which substep forms are missing required inputs (disables their buttons).
+  const _scannedTables = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
+  const defaultAsset = (scanTable && scanTable !== "__ALL__" ? scanTable : "") || _scannedTables[0] || "";
+  const formIncomplete = (ss) => {
+    switch (ss.form) {
+      case "propagate":   return !propagateForm.asset_name || propagateForm.score === "";
+      case "lineage": case "impact": case "source": return !(lineageForm.asset_name || defaultAsset);
+      case "suggest":     return !(glossForm.asset_name || defaultAsset);
+      case "term":        return !glossForm.term_name || !glossForm.definition;
+      case "trends": case "remediation": return !monitorForm.asset_name;
+      case "alert":       return !monitorForm.asset_name || !monitorForm.threshold || !monitorForm.notify_email;
+      default:            return false;
+    }
+  };
   // scanSource is optional — schema alone is sufficient for the scan API
 
   return (
@@ -2396,6 +2880,153 @@ function App() {
               </div>
             )}
 
+            {/* Lineage substep inputs (step 2) — provenance controls */}
+            {activeStep === "scan" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Lineage — where does this table come from, what breaks if it changes</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Asset</label>
+                    <input type="text" value={lineageForm.asset_name}
+                      onChange={e => setLineageForm(f => ({ ...f, asset_name: e.target.value }))}
+                      placeholder={defaultAsset || "table / view / dataset name"}
+                      className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Direction</label>
+                    <select value={lineageForm.direction} onChange={e => setLineageForm(f => ({ ...f, direction: e.target.value }))} className={INPUT_CLS}>
+                      <option value="upstream">Upstream</option>
+                      <option value="downstream">Downstream</option>
+                      <option value="all">Both</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Depth (max 5 — each hop is another call)</label>
+                    <select value={lineageForm.depth} onChange={e => setLineageForm(f => ({ ...f, depth: parseInt(e.target.value, 10) }))} className={INPUT_CLS}>
+                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Proposed change (generate_impact_report)</label>
+                  <input type="text" value={lineageForm.change_description}
+                    onChange={e => setLineageForm(f => ({ ...f, change_description: e.target.value }))}
+                    placeholder="e.g. drop column CUSTOMER_TIER"
+                    className={INPUT_CLS}/>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Blank asset falls back to the selected table{defaultAsset ? <span> (<span className="font-mono">{defaultAsset}</span>)</span> : null}.
+                  Lineage populates from the upfront Relationship Discovery scan — nothing on this ladder produces it.
+                </p>
+              </div>
+            )}
+
+            {/* Glossary substep inputs (step 6) — solve "no term fits" inside the step */}
+            {activeStep === "curate" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Glossary tools — when no existing term fits</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Asset (suggest_terms_for_asset)</label>
+                    <input type="text" value={glossForm.asset_name}
+                      onChange={e => setGlossForm(f => ({ ...f, asset_name: e.target.value }))}
+                      placeholder={defaultAsset || "table name"}
+                      className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Domain hint (optional)</label>
+                    <input type="text" value={glossForm.domain_context}
+                      onChange={e => setGlossForm(f => ({ ...f, domain_context: e.target.value }))}
+                      placeholder="Finance, Customer…"
+                      className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Scan scope (detect_glossary_issues)</label>
+                    <select value={glossForm.scan_scope} onChange={e => setGlossForm(f => ({ ...f, scan_scope: e.target.value }))} className={INPUT_CLS}>
+                      <option value="all">Everything</option>
+                      <option value="duplicates">Duplicates only</option>
+                      <option value="orphans">Orphans only</option>
+                      <option value="gaps">Definition gaps only</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Term name (create_glossary_term)</label>
+                    <input type="text" value={glossForm.term_name}
+                      onChange={e => setGlossForm(f => ({ ...f, term_name: e.target.value }))}
+                      placeholder="e.g. Customer Lifetime Value"
+                      className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Definition</label>
+                    <input type="text" value={glossForm.definition}
+                      onChange={e => setGlossForm(f => ({ ...f, definition: e.target.value }))}
+                      placeholder="Business-facing description"
+                      className={INPUT_CLS}/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Parent category (optional)</label>
+                    <input type="text" value={glossForm.category}
+                      onChange={e => setGlossForm(f => ({ ...f, category: e.target.value }))}
+                      placeholder="external id, or id:<internal>"
+                      className={INPUT_CLS + " font-mono"}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Synonyms (comma-separated, optional)</label>
+                    <input type="text" value={glossForm.synonyms}
+                      onChange={e => setGlossForm(f => ({ ...f, synonyms: e.target.value }))}
+                      placeholder="CLV, LTV"
+                      className={INPUT_CLS}/>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Monitor inputs (step 11) — entered cold; free text is the primary selector */}
+            {activeStep === "monitor_quality" && (
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Asset to monitor — needs no upstream run</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Asset</label>
+                    <input type="text" list="monitor-assets" value={monitorForm.asset_name}
+                      onChange={e => setMonitorForm(f => ({ ...f, asset_name: e.target.value }))}
+                      placeholder="e.g. CUSTOMER_POSITIONS"
+                      className={INPUT_CLS + " font-mono"}/>
+                    <datalist id="monitor-assets">
+                      {[...new Set(discoverTables.map(t => t.name))].slice(0, 200).map(n => <option key={n} value={n}/>)}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Lookback (days — trends & alert)</label>
+                    <input type="number" min="1" max="365" value={monitorForm.lookback_days}
+                      onChange={e => setMonitorForm(f => ({ ...f, lookback_days: e.target.value }))}
+                      className={INPUT_CLS}/>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Alert when score drops ≥ (points)</label>
+                    <input type="number" min="1" max="100" value={monitorForm.threshold}
+                      onChange={e => setMonitorForm(f => ({ ...f, threshold: e.target.value }))}
+                      className={INPUT_CLS}/>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Notify email (alert_on_degradation)</label>
+                  <input type="email" value={monitorForm.notify_email}
+                    onChange={e => setMonitorForm(f => ({ ...f, notify_email: e.target.value }))}
+                    placeholder="steward@company.com"
+                    className={INPUT_CLS}/>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Run Step loads the scorecard (get_dq_scores). Trends, remediation and the alert run individually below.
+                  Scores published at step 10 may take a few minutes to roll up into the scorecard.
+                </p>
+              </div>
+            )}
+
             {/* Marketplace collection ID input */}
             {activeStep === "marketplace" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
@@ -2476,13 +3107,13 @@ function App() {
                     const res = active.substepsInParent ? results[activeStep]?.[ss.key] : (subResults[activeStep] || {})[ss.key];
                     const failed = res && (res.error || (res.status || "").includes("failed"));
                     const ok = res && !failed;
-                    const needsForm = ss.form === "propagate" && (!propagateForm.asset_name || propagateForm.score === "");
+                    const needsForm = formIncomplete(ss);
                     return (
                       <button
                         key={ss.tool}
                         onClick={() => runSubAction(active, ss)}
                         disabled={anyRunning || needsForm}
-                        title={needsForm ? "Fill the asset and score fields above first" : undefined}
+                        title={needsForm ? "Fill this tool's inputs above first" : undefined}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-sm
                           ${isRunning || needsForm ? "bg-indigo-100 border-indigo-300 text-indigo-500 cursor-not-allowed"
                           : failed    ? "bg-red-100 border-red-400 text-red-700 hover:bg-red-200"
@@ -2647,8 +3278,20 @@ function App() {
                     <div key={ss.key} className="space-y-2">
                       <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">{ss.tool}</div>
                       <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
-                        {data?.error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{data.error}</pre></div>}
-                        {R ? <R data={data}/> : <JsonViewer data={data}/>}
+                        {data?.error ? (
+                          /no asset|not found|no results/i.test(String(data.error)) ? (
+                            // Requirement 4: resolution returning nothing says "not found
+                            // in catalog", not "no results".
+                            <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-600 space-y-1">
+                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing —
+                              the asset may not be cataloged yet, or the name differs from the catalog entry.
+                              Use the exact name shown in Discover.</div>
+                              <div className="text-slate-400 font-mono">{String(data.error).slice(0, 180)}</div>
+                            </div>
+                          ) : (
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{data.error}</pre></div>
+                          )
+                        ) : (R ? <R data={data}/> : <JsonViewer data={data}/>)}
                       </div>
                     </div>
                   );

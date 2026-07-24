@@ -253,13 +253,40 @@ def _extract_dq_scores(detail: dict[str, Any]) -> list[dict[str, Any]]:
             "raw_keys":  list(rec.keys())[:8],
         }
 
+    def coerce_dqresult(rec: dict[str, Any]) -> dict[str, Any]:
+        # Current CDGC shape (2026): dataQuality is a LIST of per-dimension
+        # DQResult aggregates — core.name "DQ_VALIDITY~<assetId>", core.score,
+        # core.scoreTrend, governance.oldScore/ruleCount/RuleType.
+        ns = "com.infa.ccgf.models.governance."
+        name = str(rec.get("core.name") or "")
+        rule = name.split("~")[0] if "~" in name else (name or "DQ")
+        dim = rec.get(f"{ns}RuleType") or (
+            rule.replace("DQ_", "").title() if rule.startswith("DQ_") else None)
+        return {
+            "rule":         rule,
+            "dimension":    dim,
+            "value":        rec.get("core.score"),
+            "total":        None,
+            "exception":    None,
+            "lastRun":      rec.get("core.modifiedOn"),
+            "occurrenceId": rec.get("core.identity"),
+            "rule_count":   rec.get(f"{ns}ruleCount"),
+            "score_trend":  rec.get("core.scoreTrend"),
+            "old_score":    rec.get(f"{ns}oldScore"),
+        }
+
+    # List-shaped dataQuality first — dq.get() on a list is the crash that
+    # hid this shape until Phase 3 exercised it.
+    if isinstance(dq, list):
+        return [
+            coerce_dqresult(r) if str(r.get("core.classType", "")).endswith("DQResult") else coerce(r)
+            for r in dq if isinstance(r, dict)
+        ]
+
     for key in ("scores", "ruleOccurrences", "dataQualityScores", "ruleScores", "items"):
         v = dq.get(key)
         if isinstance(v, list):
             out.extend(coerce(r) for r in v if isinstance(r, dict))
-    # Fallback: dataQuality itself may BE the list/score
-    if not out and isinstance(dq, list):
-        out.extend(coerce(r) for r in dq if isinstance(r, dict))
     return out
 
 
@@ -272,6 +299,25 @@ def _extract_dq_trend(detail: dict[str, Any]) -> list[dict[str, Any]]:
     common keys.
     """
     dq = detail.get("dataQuality") or {}
+    if isinstance(dq, list):
+        # Per-dimension DQResult aggregates carry (oldScore -> score); synthesize
+        # a two-point series so trend classification matches CDGC's own
+        # core.scoreTrend delta. Entries without an oldScore land in no_history.
+        ns = "com.infa.ccgf.models.governance."
+        out: list[dict[str, Any]] = []
+        for r in dq:
+            if not isinstance(r, dict):
+                continue
+            name = str(r.get("core.name") or "")
+            rule = name.split("~")[0] if "~" in name else name
+            new, old = r.get("core.score"), r.get(f"{ns}oldScore")
+            t_new = r.get("core.modifiedOn")
+            t_old = r.get("core.createdOn") or t_new
+            if old is not None and t_old is not None:
+                out.append({"rule": rule, "time": t_old, "value": old})
+            if new is not None and t_new is not None:
+                out.append({"rule": rule, "time": t_new, "value": new})
+        return out
     for key in ("scoreTrend", "trend", "history", "scoreHistory"):
         v = dq.get(key)
         if isinstance(v, list):

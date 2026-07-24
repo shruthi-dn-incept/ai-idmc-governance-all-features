@@ -111,6 +111,34 @@ async def _govern(request: str, step: str | None = None) -> dict:
     return await _call(AI_GOVERNANCE_URL, "govern", args)
 
 
+# Session expiry surfaces as 401/403 with REPO_38205 buried in a tool error
+# string. Map it to HTTP 401 so the frontend's shared interceptor (cross-cutting
+# requirement 1) raises the reconnect banner instead of a raw 500.
+_SESSION_EXPIRY_MARKERS = ("repo_38205", "http 401", "unauthorized", "unknownsigner",
+                           "session expired", "invalid session", "session is not valid")
+
+
+def _as_http_error(e: Exception) -> HTTPException:
+    msg = str(e)
+    low = msg.lower()
+    if any(m in low for m in _SESSION_EXPIRY_MARKERS):
+        return HTTPException(
+            status_code=401,
+            detail=f"IDMC session expired — re-authenticate and retry. ({msg[:300]})",
+        )
+    return HTTPException(status_code=500, detail=msg)
+
+
+async def _bridge(server_url: str, tool: str, args: dict) -> Any:
+    """Call an MCP tool, translating failures into session-aware HTTP errors."""
+    try:
+        return await _call(server_url, tool, args)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _as_http_error(e) from None
+
+
 # ── Health: poll all six servers, name the ones that are down ────────────────
 # During a demo, a silent failure is worse than a visible one — but so is a
 # false alarm. A long-running tool call (e.g. a 6-minute catalog browse) can
@@ -211,7 +239,6 @@ _STUB_STEPS = {
     "profile":            ("Profile Data",        "Phase 1"),
     "recommend_rules":    ("Recommend Rules",     "Phase 1"),
     "schedule_execution": ("Schedule Execution",  "Phase 2"),
-    "monitor_quality":    ("Monitor Quality",     "Phase 3"),
 }
 
 
@@ -240,9 +267,156 @@ async def step_schedule_execution_stub():
     _stub_response("schedule_execution")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 4 — lineage substeps on step 2 (lineage_reporter)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LineageRequest(BaseModel):
+    asset_name: str
+    direction: str = "all"      # upstream | downstream | all (server normalises)
+    depth: int = 3
+    level: str = "dataset"
+
+
+@app.post("/api/step/trace_lineage")
+async def step_trace_lineage(req: LineageRequest):
+    args = req.model_dump()
+    args["depth"] = max(1, min(args["depth"], 5))   # each hop is another sequential call
+    return await _bridge(LINEAGE_REPORTER_URL, "trace_lineage", args)
+
+
+class ImpactRequest(BaseModel):
+    asset_name: str
+    change_description: str = ""
+    depth: int = 3
+    level: str = "dataset"
+
+
+@app.post("/api/step/generate_impact_report")
+async def step_generate_impact_report(req: ImpactRequest):
+    args = req.model_dump()
+    args["depth"] = max(1, min(args["depth"], 5))
+    args["change_description"] = args["change_description"] or "Proposed change (unspecified)"
+    return await _bridge(LINEAGE_REPORTER_URL, "generate_impact_report", args)
+
+
+class SourceFinderRequest(BaseModel):
+    asset_name: str
+    depth: int = 5
+    level: str = "dataset"
+
+
+@app.post("/api/step/find_data_source")
+async def step_find_data_source(req: SourceFinderRequest):
+    args = req.model_dump()
+    args["depth"] = max(1, min(args["depth"], 5))
+    return await _bridge(LINEAGE_REPORTER_URL, "find_data_source", args)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 5 — glossary substeps on step 6 (glossary_manager)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SuggestTermsRequest(BaseModel):
+    asset_name: str
+    domain_context: str | None = None
+
+
+@app.post("/api/step/suggest_terms_for_asset")
+async def step_suggest_terms(req: SuggestTermsRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GLOSSARY_MANAGER_URL, "suggest_terms_for_asset", args)
+
+
+class CreateTermRequest(BaseModel):
+    term_name: str
+    definition: str
+    category: str | None = None
+    synonyms: list[str] = []
+
+
+@app.post("/api/step/create_glossary_term")
+async def step_create_glossary_term(req: CreateTermRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(GLOSSARY_MANAGER_URL, "create_glossary_term", args)
+
+
+class GlossaryHealthRequest(BaseModel):
+    scan_scope: str = "all"
+    sample_size: int = 200
+    min_definition_length: int = 20
+
+
+@app.post("/api/step/detect_glossary_issues")
+async def step_detect_glossary_issues(req: GlossaryHealthRequest = GlossaryHealthRequest()):
+    return await _bridge(GLOSSARY_MANAGER_URL, "detect_glossary_issues", req.model_dump())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 3 — step 11 Monitor Quality (dq_monitor). Parent = scorecard.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ScoresRequest(BaseModel):
+    asset_name: str
+    dimension: str | None = None
+
+
 @app.post("/api/step/monitor_quality")
-async def step_monitor_quality_stub():
-    _stub_response("monitor_quality")
+async def step_monitor_quality(req: ScoresRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(DQ_MONITOR_URL, "get_dq_scores", args)
+
+
+class TrendsRequest(BaseModel):
+    asset_name: str
+    lookback_days: int = 30
+    degradation_delta: float = 10.0
+
+
+@app.post("/api/step/check_score_trends")
+async def step_check_score_trends(req: TrendsRequest):
+    return await _bridge(DQ_MONITOR_URL, "check_score_trends", req.model_dump())
+
+
+class RemediationRequest(BaseModel):
+    asset_name: str
+
+
+@app.post("/api/step/recommend_remediation")
+async def step_recommend_remediation(req: RemediationRequest):
+    return await _bridge(DQ_MONITOR_URL, "recommend_remediation", req.model_dump())
+
+
+class AlertCreateRequest(BaseModel):
+    asset_name: str
+    threshold: float
+    notify_email: str
+    dimension: str | None = None
+    lookback_days: int = 30
+    note: str = ""
+
+
+@app.post("/api/step/alert_on_degradation")
+async def step_alert_on_degradation(req: AlertCreateRequest):
+    args = {k: v for k, v in req.model_dump().items() if v is not None}
+    return await _bridge(DQ_MONITOR_URL, "alert_on_degradation", args)
+
+
+@app.get("/api/monitor/alerts")
+async def monitor_list_alerts():
+    """Configured alert rules — stored by OUR platform (.dq_monitor_alerts.json),
+    evaluated by our scheduler. CDGC has no alert-registration API."""
+    candidates = [_REPO_ROOT / "state" / ".dq_monitor_alerts.json",
+                  _REPO_ROOT / ".dq_monitor_alerts.json"]
+    p = next((c for c in candidates if c.exists()), candidates[-1])
+    alerts = []
+    if p.exists():
+        try:
+            alerts = json.loads(p.read_text() or "[]")
+        except Exception:  # noqa: BLE001
+            alerts = []
+    return {"alerts": alerts, "count": len(alerts), "alerts_path": str(p),
+            "storage": "local — evaluated by our scheduler, not registered in CDGC"}
 
 
 # ── Profile session state (spec Phase 0 item 8) ───────────────────────────────
@@ -253,7 +427,8 @@ async def step_monitor_quality_stub():
 # depend on a workflow concern that exists only because the UI sequences the
 # steps. Phase 1 defines the consumption shape.
 
-_PROFILE_STATE_PATH = Path(__file__).resolve().parents[3] / "state" / "profile_state.json"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PROFILE_STATE_PATH = _REPO_ROOT / "state" / "profile_state.json"
 
 
 def _profile_key(connection: str, schema: str, table: str) -> str:
