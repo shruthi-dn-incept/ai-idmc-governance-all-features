@@ -57,3 +57,6 @@ templates/RND.xlsx
 
 # Local secrets (RSA keys etc.)
 secrets/
+
+# Pasted reference docs (stale drafts) — keep local, never track
+build spec/
