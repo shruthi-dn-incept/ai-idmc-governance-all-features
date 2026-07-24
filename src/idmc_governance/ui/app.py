@@ -1301,7 +1301,10 @@ async def step_scan_mcc_source(req: ScanSourceRequest):
 
 
 class ConnectionsRequest(BaseModel):
-    top: int = 100
+    # top=0 disables the tool's client-side trim (sliced = items[:top] if top
+    # else items). The v2 /connection endpoint returns everything unpaginated,
+    # so 0 renders all connections — no hardcoded cap, the org grows.
+    top: int = 0
     type_filter: str | None = None
 
 

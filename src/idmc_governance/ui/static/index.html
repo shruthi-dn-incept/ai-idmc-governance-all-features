@@ -2326,11 +2326,15 @@ function ScanSourceResult({ data }) {
 }
 
 function ConnectionsResult({ data }) {
+  const conns = data?.connections || [];
+  // With top=0 the tool returns everything, so count === total — the old
+  // "Total in org" card was redundant. Show distinct connection types instead.
+  const typeCount = new Set(conns.map(c => c.type).filter(Boolean)).size;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Connections" value={data?.count ?? 0}/>
-        <SummaryCard label="Total in org" value={data?.total ?? 0} color="text-slate-600"/>
+        <SummaryCard label="Connections" value={data?.count ?? conns.length}/>
+        <SummaryCard label="Distinct types" value={typeCount} color="text-slate-600"/>
       </div>
       <DataTable
         columns={[
