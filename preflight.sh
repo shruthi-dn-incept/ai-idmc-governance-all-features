@@ -125,29 +125,59 @@ esac
 
 # ── 4. Relationship Discovery / lineage ───────────────────────────────────────
 hdr "4. Lineage — has Relationship Discovery populated dataflow for ${DEMO_TABLE}?"
-# Hits carry core.identity (not "id"); prefer a relational Table over the
-# governance DataSet twin. GET-by-id needs scheme=internal or it returns {}.
-aid=$(cg -X POST "${CDGC}/data360/search/v1/assets?knowledgeQuery=${DEMO_TABLE}&segments=summary,systemAttributes" \
-      -H 'Content-Type: application/json' -d '{"from":0,"size":10}' 2>/dev/null \
-  | python -c "
-import json,sys
-try: hits = json.load(sys.stdin).get('hits') or []
-except Exception: hits = []
-if isinstance(hits, dict): hits = hits.get('hits') or []
-tables = [h for h in hits if 'Table' in str((h.get('systemAttributes') or {}).get('core.classType',''))]
-pick = (tables or hits or [{}])[0]
-print(pick.get('core.identity') or '')" 2>/dev/null)
-if [ -z "$aid" ]; then
+# A friendly name resolves to MANY asset twins (Table, DataSet, MappingTask…),
+# and lineage often hangs off a twin OTHER than the first Table — so scan every
+# twin and pass if ANY carries lineage, matching what the UI's trace_lineage
+# resolves. (Checking only the first Table twin false-fails tables that clearly
+# render lineage in the app: e.g. patient_demographics_cleaned — first Table
+# twin = 0 edges, but sibling DataSet/Table twins carry them.) One python
+# process avoids shell/pipe fragility. Emits: "twins linEdges resolveId".
+# resolveId prefers a Table twin (for check 5's score lookup); GET-by-id needs
+# scheme=internal or it returns {}.
+LIN_OUT=$(JWT_PF="$JWT" SID_PF="$SESSION" CDGC_PF="$CDGC" ORG_PF="${IDMC_ORG_ID:-}" DEMO_PF="$DEMO_TABLE" \
+python - <<'PY' 2>/dev/null
+import json, os, urllib.request
+jwt, sid, cdgc = os.environ["JWT_PF"], os.environ["SID_PF"], os.environ["CDGC_PF"]
+org, name = os.environ["ORG_PF"], os.environ["DEMO_PF"]
+H = {"Authorization":"Bearer "+jwt, "IDS-SESSION-ID":sid, "X-INFA-ORG-ID":org, "x-infa-product-id":"CDGC"}
+def call(method, url, body=None):
+    r = urllib.request.Request(url, data=(json.dumps(body).encode() if body is not None else None),
+        headers={**H, **({"Content-Type":"application/json"} if body is not None else {})}, method=method)
+    return json.loads(urllib.request.urlopen(r, timeout=25).read())
+try:
+    s = call("POST", f"{cdgc}/data360/search/v1/assets?knowledgeQuery={name}&segments=summary,systemAttributes", {"from":0,"size":10})
+    hits = s.get("hits") or []
+    if isinstance(hits, dict): hits = hits.get("hits") or []
+except Exception:
+    hits = []
+if not hits:
+    print("NOTFOUND"); raise SystemExit
+resolve_id = ""
+for h in hits:  # prefer a Table twin for the score lookup in check 5
+    if "Table" in str((h.get("systemAttributes") or {}).get("core.classType","")):
+        resolve_id = h.get("core.identity"); break
+if not resolve_id:
+    resolve_id = hits[0].get("core.identity") or ""
+best = 0
+for h in hits:
+    aid = h.get("core.identity")
+    if not aid: continue
+    try:
+        det = call("GET", f"{cdgc}/data360/search/v1/assets/{aid}?scheme=internal&segments=summary,lineage-direction:all,lineage-level:dataset,lineage-distance:3")
+        best = max(best, len(det.get("lineage") or []))
+    except Exception:
+        pass
+print(f"{len(hits)} {best} {resolve_id}")
+PY
+)
+if [ "$LIN_OUT" = "NOTFOUND" ] || [ -z "$LIN_OUT" ]; then
   no "${DEMO_TABLE} not found in the catalog — check 4 and 5 cannot run"
+  aid=""
 else
-  ok "resolved ${DEMO_TABLE} (${aid})"
-  edges=$(cg "${CDGC}/data360/search/v1/assets/${aid}?scheme=internal&segments=summary,lineage-direction:all,lineage-level:dataset,lineage-distance:3" 2>/dev/null \
-    | python -c "
-import json,sys
-try: print(len(json.load(sys.stdin).get('lineage') or []))
-except Exception: print(0)" 2>/dev/null)
-  if [ "${edges:-0}" -gt 0 ]; then ok "lineage returns $edges edges — step 2 will render"
-  else no "lineage is EMPTY. Either Relationship Discovery has not run on this catalog source, or no CDI mappings touch this table. Step 2's lineage substeps will work and show nothing. Demo a table with real lineage, or run an MCC scan with the Relationship Discovery capability."
+  set -- $LIN_OUT; twins="$1"; edges="$2"; aid="$3"
+  ok "resolved ${DEMO_TABLE} (${twins} asset twins)"
+  if [ "${edges:-0}" -gt 0 ]; then ok "lineage present (${edges} entries across twins) — step 2 will render"
+  else no "lineage is EMPTY across all ${twins} twins. Either Relationship Discovery has not run on this catalog source, or no CDI mappings touch this table. Demo lineage against a pipeline-fed table (e.g. patient_demographics_cleaned), not a raw source table like CUSTOMER_POSITIONS."
   fi
 fi
 
