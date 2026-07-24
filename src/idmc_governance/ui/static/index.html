@@ -530,45 +530,55 @@ function EstimateBanner({ data }) {
   );
 }
 
-function TaxonomyResult({ data }) {
+function TaxonomyResult({ data, onGoToStep }) {
   const domains = data?.domains || data?.result?.domains || [];
   const s = data?._summary || data?.result?._summary || {};
   const grounded = domains.some(d => (d.subdomains || []).some(sd => (sd.business_terms || []).some(bt => bt.evidence)));
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <EstimateBanner data={data} />
-      {grounded && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
-          Classifications grounded in the step 3 profile — the domain assignment came from the data, not from column names. Evidence shown per term.
+      {/* Proposed taxonomy card */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Proposed taxonomy</span>
+          {grounded && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-bold">PROFILE INFORMED</span>}
+          <span className="ml-auto text-xs text-slate-400">{s.domain_count || domains.length} domains · {s.subdomain_count || "—"} subdomains · {s.term_count || "—"} terms</span>
         </div>
-      )}
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Domains"    value={s.domain_count || domains.length}/>
-        <SummaryCard label="Subdomains" value={s.subdomain_count || "—"}/>
-        <SummaryCard label="Business Terms" value={s.term_count || "—"}/>
-      </div>
-      {domains.map(d => (
-        <div key={d.name} className="bg-slate-100 border border-slate-300 rounded-lg p-3 space-y-2">
-          <div className="text-sm font-semibold text-brand">◈ {d.name}</div>
-          {(d.subdomains || []).map(sd => (
-            <div key={sd.name} className="ml-3">
-              <div className="text-xs text-slate-600 font-semibold mb-1">◧ {sd.name}</div>
-              <div className="flex flex-wrap gap-1.5 ml-3">
-                {(sd.business_terms || []).map(bt => (
-                  <span key={bt.name} className="text-xs bg-slate-50 border border-slate-300 text-slate-600 px-2 py-0.5 rounded shadow-sm max-w-[200px] truncate inline-block" title={bt.evidence || bt.name}>{bt.name}</span>
-                ))}
+        <div className="p-4 space-y-3">
+          {domains.map(d => (
+            <div key={d.name} className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-800">{d.name}</span>
+                <span className="text-xs bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-bold tracking-wide">DOMAIN</span>
               </div>
-              {(sd.business_terms || []).some(bt => bt.evidence) && (
-                <div className="ml-3 mt-1.5 space-y-0.5">
-                  {(sd.business_terms || []).filter(bt => bt.evidence).slice(0, 8).map(bt => (
-                    <div key={bt.name + "-ev"} className="text-xs text-slate-400">◍ <span className="font-medium text-slate-500">{bt.name}</span>: {bt.evidence}</div>
-                  ))}
+              {(d.subdomains || []).map(sd => (
+                <div key={sd.name} className="ml-4 space-y-0.5">
+                  <div className="text-xs font-semibold text-slate-600">{sd.name}</div>
+                  <div className="ml-4 space-y-0.5">
+                    {(sd.business_terms || []).map(bt => (
+                      <div key={bt.name} className="text-xs text-slate-500 leading-relaxed">
+                        {bt.name}
+                        {/* The Opella argument on screen: evidence inline, in indigo */}
+                        {bt.evidence && <span className="text-indigo-600"> ← {bt.evidence}</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
           ))}
         </div>
-      ))}
+      </div>
+      {/* Footer — nothing written yet; the next step is the gate */}
+      <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+        <span className="text-xs text-slate-500">Nothing written to the catalog yet. The next step is where you choose.</span>
+        {onGoToStep && (
+          <button onClick={() => onGoToStep("domain_structure")}
+            className="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-indigo-300 bg-white text-indigo-600 font-semibold hover:bg-indigo-50 transition-colors">
+            Review and select →
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -4624,7 +4634,8 @@ function App() {
                           setScanSchema(schema);
                           setScanTable("__ALL__");
                           setActiveStep("scan");
-                        }}/>
+                        }}
+                        onGoToStep={(id) => setActiveStep(id)}/>
                   }
                 </div>
 
