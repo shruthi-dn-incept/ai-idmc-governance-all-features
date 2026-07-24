@@ -24,7 +24,9 @@ Substeps: `list_connections` → 146 connections table. `scan_mcc_source` → en
 
 ### 2 — Scan Table ✅ (lineage data ⏳)
 Pick schema `DQ_TEST` → table `CUSTOMER_POSITIONS` → Run → column chips + timing banner.
-Lineage card + substeps (`trace_lineage`, `generate_impact_report`, `find_data_source`): **expect the dual-cause empty state** — that is correct behaviour, not a bug, until the Relationship Discovery console scan runs. Real edges: ⏳.
+Lineage card + substeps (`trace_lineage`, `generate_impact_report`, `find_data_source`):
+- On `CUSTOMER_POSITIONS` (and other Snowflake `DQ_TEST` tables): **empty by design** — no CDI mapping feeds them, so Relationship Discovery has no dataflow to derive. The dual-cause empty state is correct here.
+- ✅ **Demo lineage against a pipeline-fed table.** Verified live (2026-07-24, after the RD scan): `patient_demographics_cleaned` (7 edges, full medallion chain + Databricks volume root), `customer_credit_card_data` (15 edges), `daily_drug_performance` (9), `credit_card_validated` (7). All three substeps render — trace, severity-classified impact, source-finder to root.
 
 ### 3 — Profile Data ✅ (service mode 🔶)
 Table select (defaults to the scanned table) → "Compute locally" → Run → 19 rows, 14 columns of real statistics with the path labelled. Leave and re-enter the step → cached banner ("profiled at …, Run Step to refresh").
@@ -82,9 +84,9 @@ Export (object ids → poll → download ZIP) and Import — wired, not yet fire
 
 | # | Item | Owner | Unblocks |
 |---|---|---|---|
-| 1 | `M_DQ_Generic` 7-param rebuild (Mapping Designer, ~1h; 15-min enumeration gate first) — see IDMC_Console_Runbook.md | console | step 9 rule binding; preflight CHECK |
-| 2 | Relationship Discovery scan on the catalog source | console | step 2 lineage with real edges; preflight FAIL |
-| 3 | Binder `extra_parameters` + `.env` template-id swap + live task test | me, after #1 | Phase 2 fully done |
+| 1 | ~~`M_DQ_Generic` rebuild~~ ✅ DONE 2026-07-24: template `010YK217000000000092` ($Source$/$Target$/$Input_Field_Map$, valid). Rule fixed to `DE_RS_Null_Check` (rule-spec param not supported in this release). | done | — |
+| 2 | ~~Relationship Discovery scan~~ ✅ DONE: lineage populated on pipeline-fed tables (see step 2). Snowflake DQ_TEST tables stay empty by design (no CDI mapping). | done | — |
+| 3 | ~~Binder + `.env` swap + task test~~ ✅ DONE: no binder change needed (contract matched); `.env` → template 092 + `SNOWFLAKE_INCEPT_GOV` conn; `generate_dq_mapping_task` verified live binding all 3 params (task `010YK20Z0000000000CY`). preflight `needs eyes: 0`. | done | — |
 | 4 | First deliberate live fire of: step 9 writes, `create_dq_rules` button, export/import, profile service mode, Gate 2 UI click-through | any tester | closes the 🔶 items |
 | 5 | Link-asset CSV upload falls back to `saved_locally` | investigate when convenient | cosmetic (amber badge is honest) |
 | 6 | Real session-expiry exercise of the reconnect banner | happens naturally overnight | confidence in req-1 |
