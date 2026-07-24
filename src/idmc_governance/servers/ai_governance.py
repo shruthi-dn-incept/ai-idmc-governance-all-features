@@ -61,7 +61,10 @@ _browse_cache: dict[str, tuple[float, list]] = {}  # schema_name → (ts, hits)
 CDGC_API_BASE = os.getenv("CDGC_API_BASE", "https://cdgc-api.dm-us.informaticacloud.com")
 DEFAULT_ORG_ID = os.getenv("IDMC_ORG_ID")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CDMP_API_BASE               = os.getenv("CDMP_API_BASE", "https://cdgc-api.dm-us.informaticacloud.com/cdmp-marketplace")
+# Same pod as CDGC_API_BASE — a JWT minted on one pod presented to another
+# pod's marketplace fails as 401 "UnknownSigner" (root cause of the step 12-15
+# failures on 2026-07-23/24: this default said dm-us while the org is dmp-us).
+CDMP_API_BASE               = os.getenv("CDMP_API_BASE", "https://cdgc-api.dmp-us.informaticacloud.com/cdmp-marketplace")
 CDMP_DELIVERY_TEMPLATE_ID   = os.getenv("CDMP_DELIVERY_TEMPLATE_ID", "")
 CDMP_TERMS_OF_USE_ID         = os.getenv("CDMP_TERMS_OF_USE_ID", "")
 
