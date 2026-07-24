@@ -177,6 +177,13 @@ const STEPS = [
 const STATUS = { idle: "idle", running: "running", done: "done", error: "error", skipped: "skipped" };
 const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "data_quality", "publish_governance", "create_collection", "publish_marketplace", "configure_delivery", "consumer_access"]);
 
+// Cross-cutting requirement 1: one shared interceptor. 401, or 403 carrying
+// REPO_38205 (and kin), means the IDMC session died — the most likely demo
+// failure. Every screen surfaces the same reconnect affordance instead of a
+// raw error. (403 alone is NOT expiry — REPO_36004 template errors are 403s.)
+let notifySessionExpired = null;
+const SESSION_EXPIRY_RE = /REPO_38205|UnknownSigner|Unauthorized|session (has )?expired|invalid session/i;
+
 async function apiPost(path, body = {}, signal = undefined) {
   const r = await fetch(path, {
     method: "POST",
@@ -186,9 +193,30 @@ async function apiPost(path, body = {}, signal = undefined) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail || r.statusText);
+    const msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail || r.statusText);
+    if ((r.status === 401 || SESSION_EXPIRY_RE.test(msg)) && notifySessionExpired) notifySessionExpired(msg);
+    const e = new Error(msg);
+    e.status = r.status;
+    throw e;
   }
   return r.json();
+}
+
+// Requirement 7: composite status derives from per-tool outcomes, never from
+// the HTTP call completing. A step whose four tools all failed must not read
+// green — the dot is what a steward scans; the rows are what they read
+// afterwards, if the dot gives them a reason to.
+function toolOutcomeFailed(r) {
+  if (!r) return false;   // tool not attempted (e.g. only some substeps run individually)
+  const st = String(r.status || "").toLowerCase();
+  return !!r.error || st === "failed" || st === "not_found";
+}
+
+function compositeFailure(stepDef, data) {
+  const keys = (stepDef?.substeps || []).map(ss => ss.key);
+  const failed = keys.filter(k => toolOutcomeFailed(data?.[k]));
+  if (!failed.length) return null;
+  return `${failed.length} of ${keys.length} tools failed: ${failed.join(", ")} — the rows below carry the detail`;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -1032,8 +1060,10 @@ function MccScanResult({ data }) {
 
 function SubStepRow({ label, result, detail }) {
   const s = result?.status || "";
-  const ok = ["created","existing","done","published","linked","already_linked","found","partial","uploaded","saved_locally"].some(v => s.includes(v));
-  const failed = s.includes("failed") || result?.error;
+  // failed is computed FIRST: "not_found".includes("found") is true, so the
+  // ok-marker substring test alone would render a missing asset with a ✓.
+  const failed = s.includes("failed") || s === "not_found" || result?.error;
+  const ok = !failed && ["created","existing","done","published","linked","already_linked","found","partial","uploaded","saved_locally"].some(v => s.includes(v));
   const icon = failed ? "✗" : ok ? "✓" : "–";
   const color = failed ? "text-red-500" : ok ? "text-emerald-600" : "text-slate-400";
   return (
@@ -1622,6 +1652,20 @@ const SUB_RENDERERS = {
   withdraw_access: WithdrawAccessResult,
 };
 
+function SessionExpiredBanner({ message, onDismiss }) {
+  if (!message) return null;
+  return (
+    <div className="bg-red-50 border-b border-red-200 px-6 py-2.5 flex items-center gap-3 shrink-0">
+      <span className="text-lg">⚠️</span>
+      <div className="flex-1">
+        <span className="text-sm font-semibold text-red-800">IDMC session expired — </span>
+        <span className="text-xs text-red-700">reconnect (run scripts/refresh-session.sh or re-login), then re-run the action. The servers re-mint tokens on their next call.</span>
+      </div>
+      <button onClick={onDismiss} className="text-xs px-3 py-1 rounded-lg border border-red-300 text-red-600 font-semibold bg-white hover:bg-red-100">Dismiss</button>
+    </div>
+  );
+}
+
 // Polls all six MCP servers and NAMES the ones that are down. During a demo a
 // silent failure is worse than a visible one.
 function HealthIndicator() {
@@ -1711,6 +1755,16 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // propagate_dq_score (step 10) — the one substep that needs inputs
   const [propagateForm, setPropagateForm] = useState({ asset_name: "", score: "", dimension: "Accuracy" });
+  const [sessionExpired, setSessionExpired] = useState(null);
+
+  // Always-fresh results for derivations inside async callbacks.
+  const resultsRef = useRef(results);
+  useEffect(() => { resultsRef.current = results; });
+
+  useEffect(() => {
+    notifySessionExpired = (msg) => setSessionExpired(msg);
+    return () => { notifySessionExpired = null; };
+  }, []);
 
   // Persist key state to localStorage whenever it changes
   useEffect(() => {
@@ -1776,22 +1830,24 @@ function App() {
     }
     setSubRunning(prev => ({ ...prev, [ss.key]: true }));
     setErrors(prev => ({ ...prev, [step.id]: null }));
+    // Requirement 7: after an individual run on a composite step, the dot is
+    // re-derived from ALL per-tool outcomes present so far — one failing tool
+    // must flip it, one succeeding tool must not paper over earlier failures.
+    const settle = (outcome) => {
+      if (step.substepsInParent) {
+        const merged = { ...(resultsRef.current[step.id] || {}), [ss.key]: outcome };
+        const compErr = compositeFailure(step, merged);
+        setResults(prev => ({ ...prev, [step.id]: merged }));
+        setStatuses(prev => ({ ...prev, [step.id]: compErr ? STATUS.error : STATUS.done }));
+        setErrors(prev => ({ ...prev, [step.id]: compErr }));
+      } else {
+        setSubResults(prev => ({ ...prev, [step.id]: { ...(prev[step.id] || {}), [ss.key]: outcome } }));
+      }
+    };
     try {
-      const data = await apiPost(ss.route, body);
-      if (step.substepsInParent) {
-        setResults(prev => ({ ...prev, [step.id]: { ...(prev[step.id] || {}), [ss.key]: data } }));
-        setStatuses(prev => ({ ...prev, [step.id]: STATUS.done }));
-      } else {
-        setSubResults(prev => ({ ...prev, [step.id]: { ...(prev[step.id] || {}), [ss.key]: data } }));
-      }
+      settle(await apiPost(ss.route, body));
     } catch(e) {
-      const fail = { status: "failed", error: e.message };
-      if (step.substepsInParent) {
-        setResults(prev => ({ ...prev, [step.id]: { ...(prev[step.id] || {}), [ss.key]: fail } }));
-        setStatuses(prev => ({ ...prev, [step.id]: STATUS.done }));
-      } else {
-        setSubResults(prev => ({ ...prev, [step.id]: { ...(prev[step.id] || {}), [ss.key]: fail } }));
-      }
+      settle({ status: "failed", error: e.message });
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
@@ -1891,10 +1947,25 @@ function App() {
       // An error-shaped result ({error} or {result:{error}}) carries no status field,
       // so it must be detected explicitly — otherwise a hard failure renders as a
       // green "Completed 0/0/0" (the step's summary reads empty created/skipped/errors).
-      const errMsg = data?.error || data?.result?.error;
-      const isFailed = !!errMsg
+      let errMsg = data?.error || data?.result?.error;
+      let isFailed = !!errMsg
         || data?.status === "failed"
         || (typeof data?.status === "number" && data.status >= 400);
+      // Requirement 7: composite steps (12, 14) derive the dot from per-tool outcomes.
+      const stepDef = STEPS.find(s => s.id === stepId);
+      if (!errMsg && stepDef?.substepsInParent) {
+        const compErr = compositeFailure(stepDef, data);
+        if (compErr) { isFailed = true; errMsg = compErr; }
+      }
+      // Step 8 fans out to rule creation + occurrence registration inside one route:
+      // zero rules created with errors present is a failure, not a green 0/0/0.
+      if (!errMsg && stepId === "data_quality") {
+        const r = data?.rules;
+        const ruleErrs = r?.errors || [];
+        const createdCount = (r?.rules_created || []).length + (r?.occurrences_registered || []).length;
+        if (!r) { isFailed = true; errMsg = "create_generic_dq_rules did not run — the plan returned no rule action"; }
+        else if (ruleErrs.length > 0 && createdCount === 0) { isFailed = true; errMsg = `rule creation failed for every column (${ruleErrs.length} errors)`; }
+      }
       if (errMsg) setErrors(prev => ({ ...prev, [stepId]: errMsg }));
       setStatus(stepId, isFailed ? STATUS.error : STATUS.done);
     } catch (err) {
@@ -1915,7 +1986,21 @@ function App() {
       });
       const sysData = await apiPost("/api/step/system_dataset", {});
       setResults(prev => ({ ...prev, domain_structure: { ...domainData, system_dataset: sysData } }));
-      setStatus("domain_structure", STATUS.done);
+      // Requirement 7: step 5 fans out to two tools — derive from both outcomes.
+      const domErr = domainData?.error || domainData?.result?.error;
+      const sysErr = sysData?.error || sysData?.result?.error;
+      const domRes = domainData?.result || domainData || {};
+      const domTotalFail = (domRes.errors || []).length > 0
+        && (domRes.created || []).length === 0 && (domRes.skipped || []).length === 0;
+      if (domErr || sysErr || domTotalFail) {
+        const parts = [];
+        if (domErr || domTotalFail) parts.push(`create_domain_structure: ${domErr || "every item errored"}`);
+        if (sysErr) parts.push(`create_system_and_dataset: ${sysErr}`);
+        setErrors(prev => ({ ...prev, domain_structure: parts.join(" · ") }));
+        setStatus("domain_structure", STATUS.error);
+      } else {
+        setStatus("domain_structure", STATUS.done);
+      }
       setDomainItems([]);
     } catch (err) {
       setErrors(prev => ({ ...prev, domain_structure: err.message }));
@@ -2067,6 +2152,8 @@ function App() {
           <HealthIndicator/>
         </div>
       </header>
+
+      <SessionExpiredBanner message={sessionExpired} onDismiss={() => setSessionExpired(null)}/>
 
       {/* Settings slide-over — org-scoped actions live here, not on the ladder.
           A settings panel is not navigation: no status dot, no ladder position,
