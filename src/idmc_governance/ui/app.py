@@ -287,14 +287,12 @@ async def step_profile(req: ProfileStepRequest):
         raise HTTPException(422, "Informatica profiling needs IDMC_DQ_CONNECTION_ID and "
                                  "IDMC_DQ_RUNTIME_ENV_ID in .env — or use 'Compute locally'.")
     args = {"connection_id": conn, "object_name": req.object_name, "runtime_environment_id": rt}
-    try:
-        out = await _bridge(GOVERNANCE_ENGINE_URL, "run_profile", args)
-    except HTTPException as e:
-        # No existing profile definition → create one and auto-run it.
-        if e.status_code == 500 and "no profile" in str(e.detail).lower():
-            out = await _bridge(GOVERNANCE_ENGINE_URL, "create_profile", dict(args, auto_run=True))
-        else:
-            raise
+    # No auto-create fallback. run_profile's "No profile defined for connection=…
+    # object=…" is an accurate per-table prerequisite — the v2 Snowflake connector
+    # cannot auto-define a profile — not a bug to work around. Surface it rather
+    # than performing an unrequested create whose own failure would mask the real
+    # message. (Use the warehouse path, mode="local", when no IDMC profile exists.)
+    out = await _bridge(GOVERNANCE_ENGINE_URL, "run_profile", args)
     if isinstance(out, dict):
         out["profile_path"] = "informatica_service"
     return out
@@ -317,6 +315,7 @@ async def step_compute_profile(req: ProfileSubRequest):
 
 class ProfileRunRequest(BaseModel):
     object_name: str
+    columns: list[dict] | None = None   # [{name, dataType, ...}] — forwarded to create_profile
 
 
 @app.post("/api/step/create_profile")
@@ -324,9 +323,14 @@ async def step_create_profile(req: ProfileRunRequest):
     conn, rt = _env_value("IDMC_DQ_CONNECTION_ID"), _env_value("IDMC_DQ_RUNTIME_ENV_ID")
     if not conn or not rt:
         raise HTTPException(422, "Set IDMC_DQ_CONNECTION_ID and IDMC_DQ_RUNTIME_ENV_ID in .env.")
-    return await _bridge(GOVERNANCE_ENGINE_URL, "create_profile", {
-        "connection_id": conn, "object_name": req.object_name,
-        "runtime_environment_id": rt, "auto_run": True})
+    # Forward the column list step 2 already scanned. create_profile's CDGC lookup
+    # resolves nothing even for a table just scanned, so passing columns explicitly
+    # is the difference between it working and failing with "No columns provided".
+    args = {"connection_id": conn, "object_name": req.object_name,
+            "runtime_environment_id": rt, "auto_run": True}
+    if req.columns:
+        args["columns"] = req.columns
+    return await _bridge(GOVERNANCE_ENGINE_URL, "create_profile", args)
 
 
 @app.post("/api/step/run_profile")
@@ -342,6 +346,15 @@ async def step_run_profile(req: ProfileRunRequest):
 async def step_get_profile_results(req: ProfileRunRequest):
     out = await _bridge(GOVERNANCE_ENGINE_URL, "get_profile_results", {"object_name": req.object_name})
     if isinstance(out, dict):
+        # Filter by identity (Phase 1 / Step 3, rule 2). The profiling service can
+        # resolve or return a different asset than requested; passing that through
+        # would let steps 4 and 7 read another table's statistics as this table's
+        # profile. Reject the mismatch instead of relabeling it.
+        resolved = str((out.get("asset") or {}).get("name") or "").strip()
+        if resolved and req.object_name and resolved.lower() != req.object_name.strip().lower():
+            raise HTTPException(409, f"Profiling service returned results for '{resolved}', not the "
+                                     f"requested '{req.object_name}'. The run for this table has not "
+                                     f"completed — re-run once it has.")
         out["profile_path"] = "cdgc_catalog"
     return out
 

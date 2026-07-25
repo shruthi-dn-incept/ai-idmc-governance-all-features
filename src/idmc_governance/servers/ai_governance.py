@@ -1337,7 +1337,10 @@ def scan_fetch_columns(
       external_id:   External ID string (from scan_find_tables result).
       force_refresh: Bypass disk cache and re-fetch from CDGC.
 
-    Returns: {table, column_count, columns_preview:[first 10], source, message}
+    Returns: {table, column_count, columns_preview:[first 10 names],
+              columns_detail:[{name, data_type} for every column], source, message}.
+    columns_detail carries the data_type the UI's Column metadata card needs;
+    columns_preview stays names-only for the chip/summary fallback.
     """
     SCAN_CACHE_DIR.mkdir(exist_ok=True)
     cache_key  = re.sub(r"[^\w]", "_", table_name.upper())
@@ -1354,6 +1357,7 @@ def scan_fetch_columns(
                 "column_count":    len(record.get("columns", [])),
                 "source":          "cache",
                 "columns_preview": [c["name"] for c in record.get("columns", [])[:10]],
+                "columns_detail":  [{"name": c.get("name"), "data_type": c.get("data_type", "")} for c in record.get("columns", [])],
                 "message":         f"Loaded {len(record.get('columns', []))} columns from cache for {table_name}.",
             }
 

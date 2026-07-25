@@ -328,7 +328,7 @@ function DiscoverResult({ data, onSelectSchema }) {
                 <span className="text-sm font-bold tracking-wide">{cs.source}</span>
               </div>
               <div className="flex items-center gap-3 text-indigo-200 text-xs">
-                <span>{cs.total_tables?.toLocaleString()} tables · {schemaCount} schema{schemaCount !== 1 ? "s" : ""}{scanned ? ` · scanned ${scanned}` : ""}</span>
+                <span>{cs.total_tables?.toLocaleString()} tables · {schemaCount} schema{schemaCount !== 1 ? "s" : ""} · {scanned ? <>scanned {scanned}</> : <span className="text-amber-300 font-semibold">never scanned</span>}</span>
                 <span className="text-lg leading-none">{isOpen ? "▾" : "▸"}</span>
               </div>
             </button>
@@ -480,15 +480,41 @@ function ScanResult({ data, scanSource, scanSchema }) {
                     </div>
                     <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{c.column_count} columns</span>
                   </div>
-                  {/* Level 4 — Column chips */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {(c.columns_preview || []).map(col => (
-                      <span key={col} className="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono max-w-[200px] truncate inline-block" title={col}>{col}</span>
-                    ))}
-                    {c.column_count > (c.columns_preview || []).length && (
-                      <span className="text-xs text-slate-400 px-2 py-0.5">+{c.column_count - (c.columns_preview || []).length} more</span>
-                    )}
-                  </div>
+                  {/* Column metadata — COLUMN · TYPE · NULLABLE · DESCRIPTION.
+                      TYPE is forwarded from the scan tool (columns_detail); NULLABLE
+                      and DESCRIPTION are not in the scan output at all and render
+                      muted (— / none), not synthesised. Falls back to names-only for
+                      results cached before columns_detail existed. */}
+                  {(() => {
+                    const detail = (c.columns_detail && c.columns_detail.length)
+                      ? c.columns_detail
+                      : (c.columns_preview || []).map(n => ({ name: n, data_type: "" }));
+                    if (!detail.length) return null;
+                    return (
+                      <div className="border border-slate-200 rounded-lg overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100 bg-slate-50">
+                              <th className="text-left px-3 py-1.5 font-semibold">Column</th>
+                              <th className="text-left px-3 py-1.5 font-semibold">Type</th>
+                              <th className="text-left px-3 py-1.5 font-semibold">Nullable</th>
+                              <th className="text-left px-3 py-1.5 font-semibold">Description</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {detail.map((col, ci) => (
+                              <tr key={ci}>
+                                <td className="px-3 py-1.5 font-mono text-xs text-slate-700">{col.name}</td>
+                                <td className="px-3 py-1.5 font-mono text-xs text-slate-500">{col.data_type ? col.data_type : <span className="text-slate-300">—</span>}</td>
+                                <td className="px-3 py-1.5 text-xs text-slate-300">—</td>
+                                <td className="px-3 py-1.5 text-xs text-slate-300">none</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -2190,7 +2216,24 @@ function AlertResult({ data }) {
 // Day-3 renderers (Phases 1, 6, 2)
 // ══════════════════════════════════════════════════════════════════════════════
 
-function ProfileResult({ data }) {
+function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject }) {
+  // Item 1, rule 1: never render a profile whose {connection, schema, table}
+  // differs from the current selection. The result carries _selection from fetch
+  // time; a mismatch means the selection moved on — show a prompt, not stale stats.
+  const curTable = String(profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || "").trim();
+  const sel = data && data._selection;
+  if (sel && curTable && (
+        String(sel.table || "").toLowerCase() !== curTable.toLowerCase() ||
+        String(sel.connection || "") !== String(scanSource || "") ||
+        String(sel.schema || "") !== String(scanSchema || ""))) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-700">
+        This profile is for <span className="font-mono font-semibold">{sel.table}</span>, but the current
+        selection is <span className="font-mono font-semibold">{curTable}</span>. Re-run Profile Data to
+        profile the selected table.
+      </div>
+    );
+  }
   const cols = data?.columns || {};
   const names = Object.keys(cols);
   const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally — direct Snowflake query"
@@ -2243,7 +2286,11 @@ function ProfileResult({ data }) {
               { key: "distinct", label: "Distinct", render: r => {
                   const dc = r.stats.distinct_count;
                   if (dc == null) return <span className="text-slate-400">—</span>;
-                  const dup = totalRows && dc < totalRows;
+                  // Duplication only signals a defect on a column that should be
+                  // unique. Fire the badge only when the column reads as an identifier
+                  // — suppress it on code lists and low-cardinality columns, where
+                  // distinct < rows is the norm and the badge would be pure noise.
+                  const dup = totalRows && dc < totalRows && readsAs(r.stats) === "identifier";
                   return <span className="flex items-center gap-1.5">{dc.toLocaleString ? dc.toLocaleString() : dc}{dup ? <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">dup</span> : null}</span>;
                 } },
               { key: "minmax", label: "Min / Max", render: r => <span className="font-mono text-slate-500">{String(r.stats.min_value ?? "—").slice(0, 16)} / {String(r.stats.max_value ?? "—").slice(0, 16)}</span> },
@@ -2570,30 +2617,74 @@ function HealthIndicator() {
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
+  // Six dots, one per MCP server, then "N of M online" — which server is down at
+  // a glance (spec: The shell / header), and the failing ones named, not a ratio.
   if (!health) return (
-    <div className="flex items-center gap-2">
-      <span className="w-2 h-2 rounded-full bg-slate-300 pulse inline-block"/>
-      <span className="text-xs text-slate-400 font-medium">Checking MCP servers…</span>
+    <div className="flex items-center gap-1.5">
+      {[...Array(6)].map((_, i) => <span key={i} className="w-2 h-2 rounded-full bg-slate-300 pulse inline-block"/>)}
+      <span className="text-xs text-slate-400 font-medium ml-1">checking…</span>
     </div>
   );
-  if (health.all_ok && (health.busy || []).length > 0) return (
-    <div className="flex items-center gap-2" title={`${(health.busy || []).join(", ")} — processing a long-running call; new requests queue until it finishes`}>
-      <span className="w-2 h-2 rounded-full bg-amber-400 pulse inline-block"/>
-      <span className="text-xs text-amber-600 font-medium">{health.online}/{health.total} online — {(health.busy || []).join(", ")} busy</span>
-    </div>
-  );
-  if (health.all_ok) return (
-    <div className="flex items-center gap-2" title={(health.servers || []).map(s => s.server).join(", ")}>
-      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>
-      <span className="text-xs text-slate-400 font-medium">MCP servers {health.online}/{health.total} online</span>
-    </div>
-  );
+  const busy = health.busy || [];
+  const servers = (health.servers && health.servers.length)
+    ? health.servers
+    : [...Array(health.total || 6)].map(() => ({ state: health.all_ok ? "up" : "down" }));
+  const online = health.online != null ? health.online : servers.filter(s => s.state !== "down").length;
+  const total = health.total || servers.length || 6;
+  const dotCls = (s) => s.state === "down" ? "bg-red-500 pulse"
+                      : busy.includes(s.server) ? "bg-amber-400 pulse" : "bg-emerald-500";
+  const title = servers.map(s => `${s.server || "server"}: ${s.state || "?"}${busy.includes(s.server) ? " (busy)" : ""}${s.error ? " — " + s.error : ""}`).join("\n");
   return (
-    <div className="flex items-center gap-2" title={(health.servers || []).filter(s => s.state === "down").map(s => `${s.server}: ${s.error || "down"}`).join("\n")}>
-      <span className="w-2 h-2 rounded-full bg-red-500 pulse inline-block"/>
-      <span className="text-xs text-red-500 font-semibold">{(health.down || []).join(", ")} down</span>
+    <div className="flex items-center gap-1.5" title={title}>
+      {servers.map((s, i) => <span key={i} className={`w-2 h-2 rounded-full inline-block ${dotCls(s)}`}/>)}
+      <span className={`text-xs font-medium ml-1 ${online < total ? "text-red-500 font-semibold" : "text-slate-500"}`}>
+        {online} of {total} online{(health.down && health.down.length) ? ` — ${health.down.join(", ")} down` : busy.length ? ` — ${busy.join(", ")} busy` : ""}
+      </span>
     </div>
   );
+}
+
+// Session age — the leading indicator for the session-expiry failure the spec
+// calls the most likely demo failure, so it lives in the header.
+function SessionTimer() {
+  const [mins, setMins] = useState(0);
+  const start = useRef(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setMins(Math.floor((Date.now() - start.current) / 60000)), 30000);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-slate-500 pl-3 border-l border-slate-200"
+      title="Session age. Sessions expire; if calls start returning 401 REPO_38205, reconnect.">
+      <span className="w-2 h-2 rounded-full bg-emerald-500"/>Session · {mins}m
+    </div>
+  );
+}
+
+// Second line under each sidebar row — how a steward reads pipeline state without
+// clicking through fifteen steps (spec: The shell / sidebar).
+function stepStatusLine(step, status, results) {
+  if (status === STATUS.skipped) return "Skipped by steward";
+  if (status === STATUS.error)   return "Failed — open to retry";
+  if (status === STATUS.running) return step.gate ? "Awaiting steward review" : "Running…";
+  if (status === STATUS.done) {
+    const r = results[step.id] || {};
+    if (step.id === "discover") {
+      const g = r.catalog_sources_grouped || (r.result && r.result.catalog_sources_grouped) || [];
+      if (g.length) {
+        const t = g.reduce((n, s) => n + (s.total_tables || (s.schemas || []).reduce((m, x) => m + ((x.tables || []).length), 0) || 0), 0);
+        return `${g.length} source${g.length !== 1 ? "s" : ""}${t ? ` · ${t} tables` : ""}`;
+      }
+    }
+    if (step.id === "scan") {
+      const t = r.table || r.object_name; const c = (r.columns || []).length;
+      if (t) return `${t}${c ? ` · ${c} cols` : ""}`;
+    }
+    if (step.id === "profile") { const c = Object.keys(r.columns || {}).length; if (c) return `${c} columns profiled`; }
+    if (step.id === "taxonomy") { const d = (r.domains || (r.taxonomy && r.taxonomy.domains) || []).length; if (d) return `${d} domain${d !== 1 ? "s" : ""}`; }
+    return "Complete";
+  }
+  return "Not started";
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
@@ -2624,9 +2715,10 @@ function App() {
   const [showJson,   setShowJson]   = useState({});
   const abortRef = useRef(null);
 
-  const [scanTable,  setScanTable]  = useState(_saved?.scanTable  || "");
-  const [scanSchema, setScanSchema] = useState(_saved?.scanSchema || "");
-  const [scanSource, setScanSource] = useState(_saved?.scanSource || "");
+  const [scanTable,    setScanTable]    = useState(_saved?.scanTable    || "");
+  const [scanSchema,   setScanSchema]   = useState(_saved?.scanSchema   || "");
+  const [scanSource,   setScanSource]   = useState(_saved?.scanSource   || "");
+  const [scanDatabase, setScanDatabase] = useState(_saved?.scanDatabase || "");
   // Domain structure approval state
   const [domainItems,    setDomainItems]    = useState([]);
   const [domainSelected, setDomainSelected] = useState(new Set());
@@ -2774,9 +2866,9 @@ function App() {
   // Persist key state to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, scanDatabase, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs }));
     } catch {}
-  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs]);
+  }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, scanDatabase, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs]);
 
   const discoverTables    = results.discover?.result?.tables_for_selection || [];
   const discoverSources   = results.discover?.result?.catalog_sources_grouped || [];
@@ -2881,6 +2973,14 @@ function App() {
       const obj = profileObject || defaultAsset;
       if (!obj) return;
       body = { object_name: obj, database: profileDatabase || undefined, schema: profileSchema || scanSchema || undefined };
+      // create_profile can't resolve columns from CDGC even for a just-scanned
+      // table — hand it the list step 2 already holds rather than letting it fail.
+      if (ss.tool === "create_profile") {
+        const scanCols = (resultsRef.current.scan?.columns || []);
+        const forObj = scanCols.find(c => c && c.table === obj) || scanCols[0] || {};
+        const detail = forObj.columns_detail || [];
+        if (detail.length) body.columns = detail.map(c => ({ name: c.name, dataType: c.data_type || "" }));
+      }
     }
     else if (ss.form === "rule") {
       if (!ruleForm.rule_name) return;
@@ -2964,7 +3064,7 @@ function App() {
     } finally {
       setSubRunning(prev => ({ ...prev, [ss.key]: false }));
     }
-  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, scanSchema, profileObject, profileSchema, profileDatabase, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns, mccForm]);
+  }, [propagateForm, lineageForm, glossForm, monitorForm, scanTable, scanSchema, scanDatabase, profileObject, profileSchema, profileDatabase, ruleForm, mtaskForm, dqTaskForm, scheduleForm, taskflowForm, runTaskId, jobRuns, mccForm]);
 
   const runStep = useCallback(async (stepId) => {
     const controller = new AbortController();
@@ -3028,7 +3128,9 @@ function App() {
         // discover grouping; read that state (fallback to scanSchema) and carry the
         // {database, schema, table} triple — the fix for the wrong-schema failure.
         const schemaArg = profileSchema || scanSchema || undefined;
-        const dbArg = profileDatabase || undefined;
+        // Carry the database chosen at step 2 forward when step 3's own prefill
+        // didn't set one — the {database, schema, table} triple is inherited, not re-picked.
+        const dbArg = profileDatabase || scanDatabase || undefined;
         if (profileMode === "local") {
           data = await apiPost("/api/step/profile", { object_name: objName, mode: "local", database: dbArg, schema: schemaArg }, sig);
         } else {
@@ -3053,7 +3155,21 @@ function App() {
           }
           data = await apiPost("/api/step/get_profile_results", { object_name: objName }, sig);
         }
+        // Item 1 (correctness): reject a stale/mismatched profile rather than
+        // relabeling it under the selected table. The local path echoes
+        // source.object; the service path echoes asset.name (the table CDGC
+        // actually resolved). A mismatch means this table's run did not produce
+        // these stats — surface it and store nothing, or steps 4/7 inherit
+        // another table's statistics (the 242-distinct-over-240-rows bug).
+        const returnedId = String(data?.source?.object || data?.asset?.name || "").trim();
+        if (returnedId && objName && returnedId.toLowerCase() !== objName.toLowerCase()) {
+          throw new Error(`Profiling returned results for "${returnedId}", not "${objName}" — the run for `
+            + `this table did not complete. Nothing was stored; re-run Profile Data.`);
+        }
         data.object_name = objName;
+        // Tag with the selection triple so the panel is never rendered for a
+        // different {connection, schema, table} (rule 1) and the store stays clean.
+        data._selection = { connection: scanSource || "", schema: scanSchema || "", table: objName };
         // Persist to the session store — steps 4 and 7 read from here, never
         // from the profiling tools directly.
         try {
@@ -3514,42 +3630,33 @@ function App() {
   };
   // scanSource is optional — schema alone is sufficient for the scan API
 
+  // Dual-control approvals awaiting a second approver — Phase 7 / step 15 will
+  // populate this; the header chip stays hidden while it is 0.
+  const pendingApprovals = 0;
   return (
     <div className="flex flex-col h-screen text-slate-800">
 
-      {/* Header */}
-      <header className="flex items-center gap-4 px-6 py-3.5 bg-slate-100 border-b border-slate-300 shadow-sm shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow-md shadow-indigo-200">I</div>
-          <div>
-            <div className="font-bold text-slate-800 text-sm tracking-wide">INCEPT</div>
-            <div className="text-xs text-slate-400 -mt-0.5 tracking-widest uppercase">Data Governance</div>
-          </div>
-        </div>
-        <div className="h-5 w-px bg-slate-200 mx-1"/>
-        <div className="text-sm text-slate-500">IDMC CDGC Onboarding Pipeline</div>
+      {/* Header — Incept Data Solutions pill + breadcrumb, then health / approvals /
+          session / settings on the right. The logo and run-all moved to the sidebar. */}
+      <header className="flex items-center gap-4 px-6 h-14 bg-white border-b border-slate-200 shrink-0">
+        <span className="text-xs bg-slate-50 border border-slate-300 text-slate-600 px-2 py-0.5 rounded shadow-sm">Incept Data Solutions</span>
+        <span className="text-sm font-semibold text-slate-700">{active.num} · {active.label}</span>
         <div className="ml-auto flex items-center gap-3">
-          <button
-            onClick={async () => {
-              // Clear SERVER-side pipeline state too, not just the browser — otherwise
-              // the next session inherits stale state and the dispatcher can misroute.
-              try { await fetch('/api/reset', { method: 'POST' }); } catch (e) {}
-              localStorage.removeItem(LS_KEY); window.location.reload();
-            }}
-            className="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-500 font-semibold bg-red-50 hover:bg-red-100 hover:border-red-400 transition-colors"
-            title="Clear session (server + browser) and start fresh"
-          >↺ New Session</button>
-          <button
-            onClick={() => runAll?.running ? stopRunAll() : startRunAll()}
-            className="text-xs text-slate-500 hover:text-brand font-medium"
-            title="Runs the ladder top to bottom, skipping completed steps — and halts at every review gate. Never auto-approves."
-          >{runAll?.running ? "■ Stop run-all" : "▶ Run all"}</button>
+          <HealthIndicator/>
+          {/* Awaiting-approver chip — hidden until a dual-control approval is pending
+              (Phase 7 / step 15 populates pendingApprovals); clicks through to settings. */}
+          {pendingApprovals > 0 && (
+            <button onClick={() => setSettingsOpen(true)}
+              className="flex items-center gap-1.5 text-xs text-amber-600 pl-3 border-l border-slate-200 hover:text-amber-700">
+              ⚑ Awaiting approver <span className="bg-amber-500 text-white font-mono text-[10px] px-1.5 rounded-full">{pendingApprovals}</span>
+            </button>
+          )}
+          <SessionTimer/>
           <button
             onClick={() => setSettingsOpen(true)}
-            className="text-slate-400 hover:text-slate-600 text-lg leading-none transition-colors"
+            className="text-slate-400 hover:text-brand text-lg leading-none pl-2 border-l border-slate-200 transition-colors"
             title="Settings — org-scoped actions (export / import, approval policy)"
           >⚙</button>
-          <HealthIndicator/>
         </div>
       </header>
 
@@ -3653,36 +3760,75 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* Sidebar */}
-        <aside className="w-60 bg-slate-100 border-r border-slate-300 flex flex-col shrink-0 overflow-hidden py-1">
-          {STEPS.map(step => {
-            const status = statuses[step.id] || STATUS.idle;
-            const isActive = step.id === activeStep;
-            return (
+        <aside className="w-[264px] bg-white border-r border-slate-200 flex flex-col shrink-0">
+          {/* Logo block */}
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2 shrink-0">
+            <div className="w-7 h-7 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">I</div>
+            <div>
+              <div className="text-sm font-bold leading-tight text-slate-800">Incept IDMC Agent</div>
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Governance Automation</div>
+            </div>
+          </div>
+          {/* Grouped ladder — Governance (1-11) and Marketplace (12-15). One ladder,
+              one sequence; the grouping is presentational, not sections. */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1">
+            {[{ name: "Governance", steps: STEPS.filter(s => s.num <= 11) },
+              { name: "Marketplace", steps: STEPS.filter(s => s.num >= 12) }].map(group => (
+              <div key={group.name}>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-2 pb-1.5">{group.name}</div>
+                <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                  {group.steps.map(step => {
+                    const status = statuses[step.id] || STATUS.idle;
+                    const isActive = step.id === activeStep;
+                    const isNew = step.num === 3 || step.num === 7;
+                    const gated = step.gate || step.gateOn;
+                    return (
+                      <button key={step.id} onClick={() => setActiveStep(step.id)}
+                        className={`w-full text-left px-3 py-2 flex gap-2.5 transition-colors ${isActive ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
+                        <span className="mt-1 shrink-0"><StatusDot status={status}/></span>
+                        <span className="min-w-0 flex-1">
+                          <span className={`block text-[12.5px] font-semibold ${status === STATUS.skipped ? "line-through text-slate-400" : "text-slate-700"}`}>
+                            {step.num} · {step.label}
+                            {isNew && <span className="ml-1 text-[9px] bg-indigo-100 text-brand-dark px-1 py-0.5 rounded font-bold align-middle">NEW</span>}
+                            {gated && (step.gatePhase
+                              ? <span className="ml-1 text-[9px] bg-slate-100 text-slate-400 px-1 py-0.5 rounded font-bold align-middle" title={`Review gate ships in ${step.gatePhase}`}>REVIEW</span>
+                              : <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold align-middle" title={step.gateOn ? `Approval gate on: ${step.gateOn.join(", ")}` : "Approval gate"}>REVIEW</span>)}
+                          </span>
+                          <span className="block text-[11px] text-slate-400 truncate">{stepStatusLine(step, status, results)}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Footer — the run-all belongs here, small and annotated, not in the
+              header where it reads as a primary action. The note is the argument
+              the gates exist to make. */}
+          <div className="px-3 py-2.5 border-t border-slate-200 shrink-0">
+            <div className="flex items-center gap-2">
               <button
-                key={step.id}
-                onClick={() => setActiveStep(step.id)}
-                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors text-xs
-                  ${isActive
-                    ? "bg-indigo-50 text-indigo-700 border-r-2 border-brand font-semibold"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}
-              >
-                <StatusDot status={status}/>
-                <span className="flex-1 truncate">{step.label}</span>
-                {(step.gate || step.gateOn) && (
-                  <span className={step.gatePhase ? "text-slate-300" : "text-amber-500"}
-                    title={step.gatePhase
-                      ? `Review gate ships in ${step.gatePhase}`
-                      : (step.gateOn ? `Approval gate on: ${step.gateOn.join(", ")}` : "Approval gate")}>✋</span>
-                )}
-                <span className={`text-xs font-medium ${isActive ? "text-indigo-400" : "text-slate-300"}`}>{step.num}</span>
-              </button>
-            );
-          })}
+                onClick={async () => {
+                  // Clear server-side pipeline state too, not just the browser.
+                  try { await fetch('/api/reset', { method: 'POST' }); } catch (e) {}
+                  localStorage.removeItem(LS_KEY); window.location.reload();
+                }}
+                className="text-[11px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:border-brand hover:text-brand transition-colors"
+                title="Clear session (server + browser) and start fresh">Reset</button>
+              <button
+                onClick={() => runAll?.running ? stopRunAll() : startRunAll()}
+                className="flex-1 text-[11px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:border-brand hover:text-brand transition-colors"
+                title="Runs the ladder top to bottom, skipping completed steps — and halts at every review gate. Never auto-approves."
+              >{runAll?.running ? "■ Stop run-all" : "Run all unattended"}</button>
+            </div>
+            <div className="text-[10px] text-slate-400 mt-2 leading-snug">Unattended skips every review gate. Use for reruns, not first passes.</div>
+          </div>
         </aside>
 
         {/* Main content */}
         <main className="flex-1 overflow-y-auto scrollbar-thin bg-slate-200 p-6">
-          <div className="max-w-2xl mx-auto space-y-5">
+          <div className="max-w-[1080px] space-y-5">
 
             {/* Step header */}
             <div>
@@ -3719,74 +3865,85 @@ function App() {
             {activeStep === "scan" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
                 {(() => {
-                  // Single Schema dropdown across all catalog sources; the source is
-                  // auto-derived from the chosen schema (the scan API keys off schema).
-                  const allSchemaEntries = [];
-                  discoverSources.forEach(cs => (cs.schemas || []).forEach(s =>
-                    allSchemaEntries.push({ source: cs.source, schema: s.schema, tables: s.tables || [] })));
-                  const schemaNames      = [...new Set(allSchemaEntries.map(e => e.schema))].filter(Boolean);
-                  const grandTotalTables = allSchemaEntries.reduce((n, e) => n + (e.tables?.length || 0), 0);
-                  const allSchemasMode   = scanSchema === "__ALL_SCHEMAS__";
-                  const selectedEntry    = allSchemaEntries.find(e => e.schema === scanSchema);
-                  const tablesInSchema   = selectedEntry ? selectedEntry.tables : [];
-                  // Fallback: if no grouped data, use flat discoverTables
-                  const fallbackSchemas  = [...new Set(discoverTables.map(t => t.schema))].filter(Boolean);
-                  const fallbackTables   = discoverTables.filter(t => t.schema === scanSchema);
+                  // Cascading Database → Schema → Table, all from step 1's
+                  // catalog_sources_grouped (source → databases → schemas → tables).
+                  // No free text: identifier case is significant against INFORMATION_SCHEMA
+                  // and a typo is indistinguishable from a missing grant, so these stay
+                  // dropdowns even though every other selector degrades to text
+                  // (spec interaction contract rule 0 / cross-cutting requirement 5).
+                  const SEL = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100 disabled:text-slate-400";
+                  const tree = [];
+                  discoverSources.forEach(cs => (cs.databases || [{ database: "", schemas: cs.schemas || [] }]).forEach(db =>
+                    (db.schemas || []).forEach(sc => tree.push({ source: cs.source, database: db.database || "", schema: sc.schema, tables: sc.tables || [] }))));
+
+                  // Step 2 depends on Discover — show the unmet-dependency state, not
+                  // three empty dropdowns (handled the way Domain Structure handles its
+                  // own unmet dependency).
+                  if (tree.length === 0) {
+                    return (
+                      <div className="flex items-start gap-3">
+                        <span className="text-xl">◱</span>
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold text-slate-700">Discover hasn't run yet</div>
+                          <div className="text-xs text-slate-500 mt-1 leading-relaxed">
+                            The database, schema and table pickers populate from the catalog. They are dropdowns rather than
+                            free text on purpose — identifier case matters, and a typed name that doesn't match returns
+                            "not found" indistinguishably from a missing grant. Run Discover to load the catalog.
+                          </div>
+                          <button onClick={() => setActiveStep("discover")}
+                            className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-brand text-white font-semibold hover:bg-brand-dark">Go to Discover →</button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const useDb           = tree.some(e => e.database);
+                  const dbKey           = useDb ? "database" : "source";
+                  const databases       = [...new Set(tree.map(e => e[dbKey]).filter(Boolean))];
+                  const inDb            = tree.filter(e => e[dbKey] === scanDatabase);
+                  const schemasInDb     = [...new Set(inDb.map(e => e.schema))].filter(Boolean);
+                  const totalTablesInDb = inDb.reduce((n, e) => n + (e.tables?.length || 0), 0);
+                  const allSchemasMode  = scanSchema === "__ALL_SCHEMAS__";
+                  const selEntry        = inDb.find(e => e.schema === scanSchema);
+                  const tablesInSchema  = selEntry ? selEntry.tables : [];
+                  const pickDatabase = (val) => {
+                    setScanDatabase(val); setScanSchema(""); setScanTable("__ALL__");
+                    const e = tree.find(x => x[dbKey] === val);
+                    setScanSource(e ? e.source : "");
+                  };
                   const pickSchema = (val) => {
-                    setScanSchema(val);
-                    setScanTable("__ALL__");
-                    const entry = allSchemaEntries.find(e => e.schema === val);
-                    setScanSource(entry ? entry.source : "");   // derive catalog source
+                    setScanSchema(val); setScanTable("__ALL__");
+                    const e = inDb.find(x => x.schema === val);
+                    if (e) setScanSource(e.source);
                   };
                   return (
                     <>
-                      {/* Schema dropdown (catalog source auto-derived) */}
+                      {/* Database */}
+                      <div>
+                        <label className="block text-xs text-slate-500 font-medium mb-1">Database</label>
+                        <select value={scanDatabase} onChange={e => pickDatabase(e.target.value)} className={SEL}>
+                          <option value="">Select a database…</option>
+                          {databases.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                      {/* Schema — enabled once a database is chosen */}
                       <div>
                         <label className="block text-xs text-slate-500 font-medium mb-1">Schema</label>
-                        {(schemaNames.length > 0 || fallbackSchemas.length > 0) ? (
-                          <select
-                            value={scanSchema}
-                            onChange={e => pickSchema(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100"
-                          >
-                            <option value="">Select a schema…</option>
-                            {schemaNames.length > 0 && grandTotalTables > 0 && (
-                              <option value="__ALL_SCHEMAS__">⚡ All schemas ({grandTotalTables.toLocaleString()} tables total — samples a few, estimates full run)</option>
-                            )}
-                            {(schemaNames.length > 0 ? schemaNames : fallbackSchemas).map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        ) : (
-                          <input type="text" placeholder="SCHEMA_NAME" value={scanSchema}
-                            onChange={e => pickSchema(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 font-mono"
-                          />
-                        )}
+                        <select value={scanSchema} onChange={e => pickSchema(e.target.value)} className={SEL} disabled={!scanDatabase}>
+                          <option value="">{scanDatabase ? "Select a schema…" : "Select a database first"}</option>
+                          {schemasInDb.length > 0 && totalTablesInDb > 0 && (
+                            <option value="__ALL_SCHEMAS__">⚡ All schemas ({totalTablesInDb.toLocaleString()} tables total — samples a few, estimates full run)</option>
+                          )}
+                          {schemasInDb.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
                       </div>
-                      {/* Table dropdown (hidden when scanning all schemas) */}
-                      <div className={allSchemasMode ? "hidden" : ""}>
+                      {/* Table — hidden while scanning all schemas or before a schema is chosen */}
+                      <div className={(scanSchema && !allSchemasMode) ? "" : "hidden"}>
                         <label className="block text-xs text-slate-500 font-medium mb-1">Table</label>
-                        {(tablesInSchema.length > 0 || fallbackTables.length > 0) ? (
-                          <select
-                            value={scanTable}
-                            onChange={e => setScanTable(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100"
-                          >
-                            {(() => {
-                              const tbl = tablesInSchema.length > 0 ? tablesInSchema : fallbackTables;
-                              return (
-                                <>
-                                  <option value="__ALL__">⚡ Scan all {tbl.length.toLocaleString()} tables in this schema (samples a few, estimates full run)</option>
-                                  {tbl.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                                </>
-                              );
-                            })()}
-                          </select>
-                        ) : (
-                          <input type="text" placeholder="TABLE_NAME (or leave blank to scan all)" value={scanTable}
-                            onChange={e => setScanTable(e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100 font-mono"
-                          />
-                        )}
+                        <select value={scanTable} onChange={e => setScanTable(e.target.value)} className={SEL}>
+                          <option value="__ALL__">⚡ Scan all {tablesInSchema.length.toLocaleString()} tables in this schema (samples a few, estimates full run)</option>
+                          {tablesInSchema.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                        </select>
                       </div>
                     </>
                   );
@@ -4627,7 +4784,7 @@ function App() {
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
                   {showJson[activeStep]
                     ? <JsonViewer data={results[activeStep]}/>
-                    : <ResultComponent data={results[activeStep]} domainItems={domainItems} domainSelected={domainSelected} scanSource={scanSource} scanSchema={scanSchema}
+                    : <ResultComponent data={results[activeStep]} domainItems={domainItems} domainSelected={domainSelected} scanSource={scanSource} scanSchema={scanSchema} scanTable={scanTable} profileObject={profileObject}
                         onSelectSchema={(source, schema) => {
                           // Discover's schema Select → set step 2's dropdowns and jump there.
                           setScanSource(source);
