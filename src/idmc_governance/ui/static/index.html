@@ -1018,18 +1018,38 @@ function DQRulesResult({ data }) {
           <div className="text-xs text-indigo-600">Rules and occurrences are registered; CDGC's Data Quality tab stays empty until Publish to Catalog uploads scores. That gap is expected, not a failure.</div>
         </div>
       </div>
-      {(rules.rules_created || []).length > 0 && (
-        <div className="bg-slate-100 border border-slate-300 rounded-lg p-3">
-          <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">Rules created</div>
-          {(rules.rules_created || []).map((r, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs mb-1">
-              <span className="text-brand">◈</span>
-              <span className="text-slate-700 font-mono font-medium">{r.rule_name}</span>
-              <span className="text-slate-400">{r.dimension}</span>
+      {(() => {
+        const occ = rules.occurrences_registered || [];
+        const rc  = rules.rules_created || [];
+        if (occ.length === 0 && rc.length === 0) return null;
+        // One row per occurrence (RULE · DIMENSION · COLUMN · OCCURRENCE). The
+        // rule for an occurrence is the rule created for its dimension; fall back
+        // to the occurrence name. When no occurrence registered, show the rules.
+        const rows = occ.length > 0
+          ? occ.map(o => ({ ...o, _rule: (rc.find(x => x.dimension === o.dimension) || {}).rule_name || o.name }))
+          : rc.map(r => ({ _rule: r.rule_name, dimension: r.dimension, column: "", occurrence_id: "" }));
+        return (
+          <div className="bg-white border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Rules and occurrences</div>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-xs font-semibold">
+                {occ.length || rc.length} created
+              </span>
             </div>
-          ))}
-        </div>
-      )}
+            <DataTable
+              columns={[
+                { key: "rule",       label: "Rule",       render: r => <span className="font-mono font-medium text-slate-700">{r._rule || "—"}</span> },
+                { key: "dimension",  label: "Dimension",  render: r => <DimChip dim={r.dimension}/> },
+                { key: "column",     label: "Column",     render: r => <span className="font-mono text-slate-600">{r.column || "—"}</span> },
+                { key: "occurrence", label: "Occurrence", render: r => r.occurrence_id
+                    ? <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 text-xs font-mono">{r.occurrence_id}</span>
+                    : <span className="text-slate-300">—</span> },
+              ]}
+              rows={rows}
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1492,13 +1512,46 @@ function DeliveryTargetResult({ data }) {
   return <PreparedStepResult data={data} label="Delivery Target" extraFields={[{label: "Type", key: "target_type"}]}/>;
 }
 
-function ConsumerAccessResult({ data }) {
-  const ok = ["COMPLETE", "PENDING", "ready"].includes(data?.status);
+function ConsumerAccessResult({ data, onAccessAction }) {
+  const status = data?.status || "";
+  const stateBadge = s => {
+    const u = (s || "").toUpperCase();
+    const cls = u === "COMPLETE" ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+      : u === "PENDING" ? "bg-amber-100 text-amber-700 border-amber-300"
+      : "bg-slate-100 text-slate-600 border-slate-300";
+    return <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cls}`}>{s || "—"}</span>;
+  };
+  // The step returns one placed order; render it as a lifecycle row. REQUESTED is
+  // not in the payload — show it muted rather than synthesise a timestamp.
+  const rows = (data?.order_id || data?.order_ref) ? [{
+    consumer:  data?.consumer_email || data?.consumer || "—",
+    orderRef:  data?.order_ref || (data?.order_id ? String(data.order_id).slice(0, 8) : ""),
+    requested: data?.requested_at || data?.requested || null,
+    status,
+  }] : [];
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Order" value={data?.order_ref || data?.order_id?.slice(0,8) || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
-        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+      <div className="bg-white border border-slate-200 rounded-xl p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Consumer access lifecycle</div>
+          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs font-semibold">dual control</span>
+        </div>
+        <DataTable
+          columns={[
+            { key: "consumer", label: "Consumer", render: r => (
+                <div><div className="font-mono text-slate-700">{r.consumer}</div>{r.orderRef && <div className="text-[10px] text-slate-400">order {r.orderRef}</div>}</div>) },
+            { key: "requested", label: "Requested", render: r => r.requested ? String(r.requested) : <span className="text-slate-300">—</span> },
+            { key: "state", label: "State", render: r => stateBadge(r.status) },
+            { key: "action", label: "Action", render: r => {
+                const u = (r.status || "").toUpperCase();
+                if (u === "PENDING")  return <button onClick={() => onAccessAction && onAccessAction("approve")}  className="px-2 py-0.5 rounded-md text-xs font-semibold border border-brand text-brand hover:bg-indigo-50">Approve</button>;
+                if (u === "COMPLETE") return <button onClick={() => onAccessAction && onAccessAction("withdraw")} className="px-2 py-0.5 rounded-md text-xs font-semibold border border-red-300 text-red-600 hover:bg-red-50">Withdraw</button>;
+                return <span className="text-slate-300">—</span>;
+              } },
+          ]}
+          rows={rows}
+          empty={<div className="text-xs text-slate-400 italic p-3">No consumer order placed yet.</div>}
+        />
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
@@ -2143,13 +2196,35 @@ function GlossaryHealthResult({ data }) {
 
 function ScorecardResult({ data }) {
   const composite = data?.composite;
+  const scores = data?.scores || [];
+  const band = v => v == null ? "text-slate-400" : v >= 90 ? "text-emerald-600" : v >= 70 ? "text-amber-600" : "text-red-600";
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  // Composite + one card per dimension: mean score and mean trend delta across
+  // that dimension's rules. Composite delta = mean trend over all scored rules.
+  const byDim = {};
+  scores.forEach(s => {
+    const d = s.dimension || "—";
+    (byDim[d] = byDim[d] || { vs: [], ts: [] });
+    const v = Number(s.value), t = Number(s.score_trend);
+    if (Number.isFinite(v)) byDim[d].vs.push(v);
+    if (Number.isFinite(t)) byDim[d].ts.push(t);
+  });
+  const dimCards = Object.entries(byDim).map(([dim, g]) => ({ label: dim, score: mean(g.vs), delta: mean(g.ts) }));
+  const allTrends = scores.map(s => Number(s.score_trend)).filter(Number.isFinite);
+  const cards = [{ label: "Composite", score: composite, delta: mean(allTrends) }, ...dimCards];
+  const StatCard = ({ label, score, delta }) => (
+    <div className="bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 flex flex-col gap-0.5 shadow-sm overflow-hidden">
+      <span className={`text-lg font-bold ${band(score)}`}>{score != null ? score.toFixed(1) + "%" : "—"}</span>
+      <span className="text-xs text-slate-400 uppercase tracking-wider font-medium truncate" title={label}>{label}</span>
+      <span className={`text-xs font-semibold ${delta == null ? "text-slate-300" : delta < 0 ? "text-red-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`}>
+        {delta == null ? "no trend" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} vs prev`}
+      </span>
+    </div>
+  );
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryCard label="Composite score" value={composite != null ? composite.toFixed(1) + "%" : "—"}
-          color={composite == null ? "text-slate-400" : composite >= 90 ? "text-emerald-600" : composite >= 70 ? "text-amber-600" : "text-red-600"}/>
-        <SummaryCard label="Rules scored" value={data?.score_count ?? 0}/>
-        <SummaryCard label="Dimensions" value={(data?.dimensions || []).length}/>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map((c, i) => <StatCard key={i} {...c}/>)}
       </div>
       {(data?.score_count ?? 0) === 0 ? (
         <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
@@ -4273,20 +4348,32 @@ function App() {
               </div>
             )}
 
-            {/* Step 9 inputs — template guard first: setup guidance, not run-time failure */}
-            {activeStep === "schedule_execution" && config && !config.has_dq_template && (
-              <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
+            {/* Step 9 template banner — reports M_DQ_Generic state (present/absent).
+                Amber is the persistent attention marker for step 9's one external
+                prerequisite; the same banner carries confirmation or setup guidance. */}
+            {activeStep === "schedule_execution" && config && (config.has_dq_template ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                <span className="text-2xl">✓</span>
+                <div>
+                  <div className="text-sm font-semibold text-amber-800">Execution template present</div>
+                  <div className="text-xs text-amber-700 mt-1 leading-relaxed">
+                    <span className="font-mono">M_DQ_Generic</span> found in this org. Tasks below bind to it.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-5 flex items-start gap-3">
                 <span className="text-2xl">🔧</span>
                 <div>
-                  <div className="text-sm font-semibold text-slate-700">DQ execution template not configured (M_DQ_Generic)</div>
-                  <div className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  <div className="text-sm font-semibold text-amber-800">DQ execution template not configured (M_DQ_Generic)</div>
+                  <div className="text-xs text-amber-700 mt-1 leading-relaxed">
                     Task generation binds the parameterized M_DQ_Generic mapping. Build it per
                     docs/IDMC_Console_Runbook.md, then set IDMC_DQ_TEMPLATE_MAPPING_ID in .env.
                     generate_dq_mapping_task stays disabled until then.
                   </div>
                 </div>
               </div>
-            )}
+            ))}
             {activeStep === "schedule_execution" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
                 <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Mapping tasks — generate from a rule, or create raw</div>
@@ -4927,7 +5014,13 @@ function App() {
                           setScanTable("__ALL__");
                           setActiveStep("scan");
                         }}
-                        onGoToStep={(id) => setActiveStep(id)}/>
+                        onGoToStep={(id) => setActiveStep(id)}
+                        onAccessAction={(kind) => {
+                          // Step 15 lifecycle-table actions reuse the gated substep
+                          // confirmation flow (dual control on approve, red on withdraw).
+                          const ss = (active.substeps || []).find(s => s.gated === kind);
+                          if (ss) openAccessConfirm(ss);
+                        }}/>
                   }
                 </div>
 
@@ -4983,12 +5076,46 @@ function App() {
               </div>
             )}
 
+            {/* Step 11: Score trend (left) beside a stacked Remediation + Alert
+                threshold column (right), per the mock. These three substeps render
+                here instead of in the generic list below. */}
+            {activeStep === "monitor_quality" && (() => {
+              const sub = subResults.monitor_quality || {};
+              if (sub.check_score_trends === undefined && sub.recommend_remediation === undefined && sub.alert_on_degradation === undefined) return null;
+              const panel = (label, keyName) => {
+                const d = sub[keyName];
+                const R = SUB_RENDERERS[keyName];
+                return (
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</div>
+                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
+                      {d === undefined
+                        ? <div className="text-xs text-slate-400 italic">Run <span className="font-mono">{keyName}</span> above to populate.</div>
+                        : d?.error
+                          ? <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{d.error}</pre></div>
+                          : (R ? <R data={d}/> : <JsonViewer data={d}/>)}
+                    </div>
+                  </div>
+                );
+              };
+              return (
+                <div className="grid grid-cols-2 gap-4 items-start">
+                  {panel("Score trend", "check_score_trends")}
+                  <div className="space-y-4">
+                    {panel("Remediation", "recommend_remediation")}
+                    {panel("Alert threshold", "alert_on_degradation")}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Substep results — steps whose parent result is not a substep map
                 render each tool's output in its own panel */}
             {Object.keys(subResults[activeStep] || {}).length > 0 && (
               <div className="space-y-3">
                 {(active.substeps || []).filter(ss => (subResults[activeStep] || {})[ss.key] !== undefined
-                    && !(activeStep === "scan" && (ss.key === "trace_lineage" || ss.key === "generate_impact_report"))).map(ss => {
+                    && !(activeStep === "scan" && (ss.key === "trace_lineage" || ss.key === "generate_impact_report"))
+                    && !(activeStep === "monitor_quality" && (ss.key === "check_score_trends" || ss.key === "recommend_remediation" || ss.key === "alert_on_degradation"))).map(ss => {
                   const data = subResults[activeStep][ss.key];
                   const R = SUB_RENDERERS[ss.key];
                   return (
