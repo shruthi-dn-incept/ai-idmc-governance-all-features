@@ -3056,15 +3056,24 @@ def create_profile(
     # JSON but explicitly null — Hibernate keys "transient" off id-is-null;
     # omitting the field produces a 400, supplying any UUID makes Hibernate
     # try UPDATE (PROFILE_SVC_00004 "unsaved-value mapping was incorrect").
+    # IDMC/PowerCenter profiling rejects DECIMAL/NUMBER precision above ~28
+    # (PROFILE_MDL_00006). Any source can declare more — Snowflake NUMBER(38,2),
+    # Databricks DECIMAL(38). Clamp precision (keep the column and its scale;
+    # precision doesn't affect the null/distinct/min/max stats profiling returns).
+    IDMC_MAX_PRECISION = 28
     src_fields: list[dict[str, Any]] = []
     pf_fields:  list[dict[str, Any]] = []
+    precision_capped: list[dict[str, Any]] = []
     for i, c in enumerate(columns):
         nm = c.get("name")
         if not nm:
             continue
         dt = c.get("dataType") or "varchar"
-        prec = int(c["precision"]) if c.get("precision") not in (None, "") else _default_precision_for(dt)
-        sc   = int(c.get("scale") or 0)
+        raw_prec = int(c["precision"]) if c.get("precision") not in (None, "") else _default_precision_for(dt)
+        prec = min(raw_prec, IDMC_MAX_PRECISION)
+        sc   = min(int(c.get("scale") or 0), prec)   # scale can't exceed precision
+        if prec != raw_prec:
+            precision_capped.append({"column": nm, "declared": raw_prec, "capped_to": prec})
         pct  = c.get("pcType") or _pc_type_for(dt)
         src_fields.append({
             "id":                 None,
@@ -3173,6 +3182,7 @@ def create_profile(
         "columns_source":   columns_source,
         "data_source_type": data_source_type,
         "http_status":      r.status_code,
+        "precision_capped": precision_capped,   # columns whose DECIMAL precision was capped to IDMC's ceiling
     }
 
     if auto_run:
