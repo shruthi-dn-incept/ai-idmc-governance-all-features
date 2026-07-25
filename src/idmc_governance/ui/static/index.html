@@ -1531,6 +1531,46 @@ function ConsumerAccessResult({ data }) {
   );
 }
 
+// Confirmation modal — the second gate pattern (steps 10, 13, 15). Not a
+// selection to review like DomainApprovalPanel; a single irreversible action whose
+// consequences are the substance of the screen. Approve on step 15 adds dual control.
+function ConfirmModal({ confirm, onClose, onConfirm }) {
+  if (!confirm) return null;
+  const { title, subtitle, consequences = [], confirmLabel, danger, dual, tool } = confirm;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-slate-900/40"/>
+      <div className="relative w-[min(470px,92vw)] bg-white rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-slate-100 flex gap-3">
+          <span className="text-lg">{danger ? "⛔" : dual ? "⚑" : "⚠"}</span>
+          <div>
+            <h3 className="text-base font-bold text-slate-800">{title}</h3>
+            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          <ul className="text-sm text-slate-600 space-y-1.5">
+            {consequences.map((c, i) => <li key={i} className="flex gap-2"><span className="text-slate-300">—</span><span>{c}</span></li>)}
+          </ul>
+          {dual && (
+            <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mt-3 text-xs text-violet-800">
+              <b>Dual control required.</b> This needs a second approver. You cannot approve your own request.
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3.5 border-t border-slate-100 flex gap-2 items-center">
+          <button onClick={onConfirm}
+            className={`px-4 py-2 rounded-lg text-white text-sm font-semibold ${danger && !dual ? "bg-red-600 hover:bg-red-700" : "bg-brand hover:bg-brand-dark"}`}>
+            {dual ? "Submit for second approval" : (confirmLabel || "Confirm")}
+          </button>
+          <button onClick={onClose} className="px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+          {tool && <span className="ml-auto text-xs text-slate-400 font-mono">{tool}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VerifyAccessResult({ data }) {
   const status    = (data?.status || "").toUpperCase();
   const fulfilled = data?.fulfilled === true || ["FULFILLED","COMPLETE","ACCESS_GRANTED","COMPLETE"].includes(status);
@@ -2769,6 +2809,8 @@ function App() {
   const [curApproving, setCurApproving] = useState(false);
   // Gates 4/5 (step 15): single-item confirmation before approve / withdraw
   const [accessGate, setAccessGate] = useState(null);
+  const [confirm, setConfirm] = useState(null);   // confirmation-modal payload (steps 10 / 13 / 15)
+  const [pending, setPending] = useState([]);      // dual-control queue awaiting a second approver
   // Settings panel: export/import
   const [expForm, setExpForm] = useState({ ids: "", name: "" });
   const [expBusy, setExpBusy] = useState(false);
@@ -3630,9 +3672,52 @@ function App() {
   };
   // scanSource is optional — schema alone is sufficient for the scan API
 
-  // Dual-control approvals awaiting a second approver — Phase 7 / step 15 will
-  // populate this; the header chip stays hidden while it is 0.
-  const pendingApprovals = 0;
+  // Dual-control approvals awaiting a second approver — drives the header chip.
+  const pendingApprovals = pending.length;
+  const _confirmStamp = () => new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  // Steps 10 (Publish to Catalog) and 13 (Publish to Marketplace) are single
+  // irreversible actions: Run opens a confirmation modal listing consequences first.
+  const CONFIRM_STEPS = {
+    publish_governance: { title: "Publish to the governance catalog",
+      subtitle: "Runs the DQ rules against live data and writes scores.",
+      consequences: ["Executes the DQ rules against the selected asset on live Snowflake data",
+        "Writes quality scores to the governance catalog", "Visible to every consumer of this asset",
+        "Cannot be retracted — only superseded by a later run"], confirmLabel: "Publish" },
+    publish_marketplace: { title: "Publish collection to the marketplace",
+      subtitle: "The collection becomes discoverable by consumers.",
+      consequences: ["Visible to every marketplace consumer in this org",
+        "Carries the current composite quality score", "Contains columns linked to identifying business terms",
+        "Unpublishing does not revoke access already granted"], confirmLabel: "Publish" },
+  };
+  const maybeConfirmRun = (stepId) => {
+    const c = CONFIRM_STEPS[stepId];
+    if (c) setConfirm({ ...c, tool: (STEPS.find(s => s.id === stepId) || {}).route, onConfirm: () => runStep(stepId) });
+    else runStep(stepId);
+  };
+  // Step 15 approve/withdraw open the confirmation modal (spec: Step layouts),
+  // not DomainApprovalPanel. Approve additionally carries dual control.
+  const openAccessConfirm = (ss) => {
+    const order = results.consumer_access || {};
+    const requester = order.consumer || "the requesting consumer";
+    const asset = order.collection_id ? `collection ${String(order.collection_id).slice(0, 8)}…` : "the published collection";
+    if (ss.gated === "withdraw") {
+      setConfirm({ title: `Withdraw access — ${requester}`, subtitle: "Destructive and irreversible from the UI.",
+        consequences: [`${requester} loses access to ${asset} immediately`,
+          "Queries running against this grant will fail", "Restoring requires a new request and a fresh approval"],
+        confirmLabel: "Withdraw access", danger: true, tool: ss.tool, onConfirm: () => runSubAction(active, ss) });
+    } else {
+      setConfirm({ title: `Approve access for ${requester}`, subtitle: "This collection contains identifying fields.",
+        consequences: [`Grants standing access to ${asset}`,
+          "Contains columns linked to identifying business terms", "Delivery target is the configured share / file / ticket"],
+        dual: true, tool: ss.tool, requester });
+    }
+  };
+  const handleConfirm = () => {
+    const c = confirm; setConfirm(null); if (!c) return;
+    // Dual control: queue for a second approver rather than executing now.
+    if (c.dual) setPending(p => [...p, { title: c.title, requester: c.requester || "data_steward@client.example", at: _confirmStamp() }]);
+    else if (c.onConfirm) c.onConfirm();
+  };
   return (
     <div className="flex flex-col h-screen text-slate-800">
 
@@ -3661,6 +3746,7 @@ function App() {
       </header>
 
       <SessionExpiredBanner message={sessionExpired} onDismiss={() => setSessionExpired(null)}/>
+      <ConfirmModal confirm={confirm} onClose={() => setConfirm(null)} onConfirm={handleConfirm}/>
 
       {/* Run-all status strip — running (indigo) / halted at a gate (amber) */}
       {runAll && (runAll.running || runAll.note) && (
@@ -4534,48 +4620,38 @@ function App() {
 
             {/* Gates 4/5 — step 15: single-item confirmation before an
                 authorisation decision (approve) or an irreversible one (withdraw) */}
-            {activeStep === "consumer_access" && accessGate && (() => {
-              const order = results.consumer_access || {};
-              const delivery = results.configure_delivery || {};
-              const requester = order.consumer || "demo consumer (this org)";
-              const assetName = order.collection_id ? `collection ${String(order.collection_id).slice(0, 8)}…` : "the published collection";
-              const target = (delivery.delivery_target && (delivery.delivery_target.name || delivery.delivery_target.target_type)) || "configured delivery target";
-              const isW = accessGate.kind === "withdraw";
-              const item = {
-                type: "Order",
-                name: order.order_ref || order.order_id || "current access order",
-                subtitle: isW
-                  ? `consumer losing access: ${requester} · asset: ${assetName}`
-                  : `requester: ${requester} · asset: ${assetName} · delivery target: ${target}`,
-              };
-              return (
-                <div className="space-y-2">
-                  <DomainApprovalPanel
-                    items={[item]}
-                    selected={new Set([item.name])}
-                    onToggle={() => {}}
-                    onToggleGroup={() => {}}
-                    onSelectAll={() => {}}
-                    onDeselectAll={() => {}}
-                    onApprove={() => { const ss = accessGate.ss; setAccessGate(null); runSubAction(active, ss); }}
-                    onRename={() => {}}
-                    renamable={false}
-                    approving={false}
-                    groups={[{ type: "Order", label: "Access Order", color: isW ? "text-red-600" : "text-slate-700", bg: isW ? "bg-red-50" : "bg-slate-50" }]}
-                    banner={isW
-                      ? { title: "Withdraw access — destructive and irreversible from the UI",
-                          body: `This revokes ${requester}'s access to ${assetName}. There is no undo here.` }
-                      : { title: "Authorisation decision — review before approving",
-                          body: "Fulfilling a consumer's data access request must not be reachable by clicking through." }}
-                    approveLabel={isW ? `Withdraw Access — ${requester}` : "Approve Order"}
-                    tone={isW ? "red" : undefined}
-                  />
-                  <button onClick={() => setAccessGate(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">
-                    Cancel — close without executing
-                  </button>
+            {/* Step 15 dual control — approvals submitted for a second approver.
+                A requester cannot approve their own request, so the Approve action
+                here is disabled; the confirmation itself is the modal opened above. */}
+            {activeStep === "consumer_access" && (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-600">Awaiting second approver</span>
+                  <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-mono">{pending.length}</span>
+                  <span className="ml-auto text-xs text-slate-400">A requester cannot approve their own request</span>
                 </div>
-              );
-            })()}
+                {pending.length === 0 ? (
+                  <div className="p-4 text-xs text-slate-400">No requests awaiting a second approver.</div>
+                ) : (
+                  <table className="w-full text-sm"><tbody className="divide-y divide-slate-50">
+                    {pending.map((pr, i) => (
+                      <tr key={i}>
+                        <td className="px-4 py-2.5 text-sm text-slate-700">{pr.title}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{pr.requester}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{pr.at}</td>
+                        <td className="px-4 py-2.5"><span className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-semibold">awaiting second approver</span></td>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <button disabled title="Requester cannot approve their own request"
+                            className="text-xs px-2.5 py-1 rounded border border-slate-200 text-slate-300 cursor-not-allowed">Approve</button>
+                          <button onClick={() => setPending(p => p.filter((_, j) => j !== i))}
+                            className="text-xs px-2.5 py-1 rounded border border-slate-300 text-slate-600 ml-1 hover:border-red-300 hover:text-red-600">Withdraw</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody></table>
+                )}
+              </div>
+            )}
 
             {/* Step 8: the approved step 7 selection is carried into this run */}
             {activeStep === "data_quality" && approvedRecs.length > 0 && (
@@ -4614,7 +4690,7 @@ function App() {
                       const st = statuses[activeStep];
                       return (
                         <button key={ss.tool}
-                          onClick={() => runStep(activeStep)}
+                          onClick={() => maybeConfirmRun(activeStep)}
                           disabled={anyRunning || active.stub}
                           title="Runs via this step's Run action"
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-sm
@@ -4637,7 +4713,7 @@ function App() {
                     return (
                       <button
                         key={ss.tool}
-                        onClick={() => ss.gated ? setAccessGate({ ss, kind: ss.gated }) : runSubAction(active, ss)}
+                        onClick={() => ss.gated ? openAccessConfirm(ss) : runSubAction(active, ss)}
                         disabled={anyRunning || needsForm}
                         title={needsForm ? "Fill this tool's inputs above first" : (ss.gated ? "Opens a confirmation gate" : undefined)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-sm
@@ -4665,7 +4741,7 @@ function App() {
               && !(activeStep === "curate" && curMatches.length > 0 && statuses["curate"] !== STATUS.done) && (
             <div className="flex items-center gap-3">
               <button
-                onClick={() => runStep(activeStep)}
+                onClick={() => maybeConfirmRun(activeStep)}
                 disabled={statuses[activeStep] === STATUS.running || !canRun}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm transition-all
                   ${statuses[activeStep] === STATUS.running || !canRun
