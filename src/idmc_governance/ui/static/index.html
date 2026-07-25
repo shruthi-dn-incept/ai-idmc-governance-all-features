@@ -171,6 +171,11 @@ const STEPS = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const STATUS = { idle: "idle", running: "running", done: "done", error: "error", skipped: "skipped" };
+
+// Actual Snowflake databases (SHOW DATABASES — standard user databases only).
+// The MCC catalog does not carry the database (discover's `database` is empty),
+// so step 3 offers this authoritative list rather than guessing from a source.
+const SNOWFLAKE_DATABASES = ["INCEPT_GOV_DEV", "GOVERNANCE_SCALE_TEST", "GOVERNANCE_SCALE_TEST_C", "GOVERNANCE", "DATA_PRODUCTS", "RND"];
 const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "data_quality", "publish_governance", "create_collection", "publish_marketplace", "configure_delivery", "consumer_access"]);
 
 // Cross-cutting requirement 1: one shared interceptor. 401, or 403 carrying
@@ -4164,8 +4169,13 @@ function App() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Database</label>
-                    <input type="text" value={profileDatabaseEff} onChange={e => setProfileDatabase(e.target.value)}
-                      placeholder="e.g. INCEPT_GOV_DEV" className={INPUT_CLS + " font-mono"}/>
+                    <select value={profileDatabaseEff} onChange={e => setProfileDatabase(e.target.value)}
+                      className={INPUT_CLS + " font-mono"}>
+                      {!SNOWFLAKE_DATABASES.includes(profileDatabaseEff) && (
+                        <option value={profileDatabaseEff}>{profileDatabaseEff || "Select a database…"}</option>
+                      )}
+                      {SNOWFLAKE_DATABASES.map(db => <option key={db} value={db}>{db}</option>)}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Schema</label>
