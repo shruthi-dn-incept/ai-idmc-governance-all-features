@@ -2883,39 +2883,52 @@ _PROFILE_SOURCE_TYPE_MAP = {
 }
 
 
-def _pc_type_for(data_type: str) -> str:
-    """Best-effort SQL data_type → IDMC pcType mapping for profile fields."""
-    dt = (data_type or "").lower()
-    if dt in ("varchar", "string", "char", "text", "nvarchar", "nchar"):
-        return "NSTRING"
-    if dt in ("number", "numeric", "decimal", "int", "integer", "bigint", "smallint", "tinyint"):
-        return "DECIMAL"
-    if dt in ("float", "double", "real"):
-        return "DOUBLE"
-    if dt in ("date",):
-        return "DATE"
-    if dt in ("timestamp", "datetime", "datetime2", "timestamptz"):
-        return "DATETIME"
-    if dt in ("boolean", "bool", "bit"):
-        return "STRING"
-    return "NSTRING"
+# The profiling service validates each declared field against the IDMC
+# connector's OWN introspection of the source and rejects any mismatch
+# (PROFILE_MDL_00006). For the Snowflake connector (TOOLKIT_CCI) that
+# introspection is a narrow, fixed shape, verified against a working
+# CUSTOMER_POSITIONS profile:
+#   - date / timestamp / datetime  -> pcType DATE,    precision 19
+#   - every other type             -> pcType NSTRING, precision bucketed
+#     UP the connector's ladder {10, 50, 255, 1000, 4000}; ALL numerics
+#     (and booleans) land on 50.
+# PowerCenter also rejects off-ladder NSTRING precisions outright, so a
+# real char length like 100 must round up to 255. Numeric/boolean columns
+# are declared as strings — profiling still returns null/distinct/min/max.
+_NSTRING_LADDER = (10, 50, 255, 1000, 4000)
+_TEXT_TYPES = (
+    "varchar", "string", "char", "text", "nvarchar", "nchar",
+    "character", "varchar2", "nvarchar2", "char varying", "character varying",
+)
 
 
-def _default_precision_for(data_type: str) -> int:
-    """Sensible per-type precision when caller doesn't specify one.
-
-    The profiling service rejects 255 for DATE columns with PROFILE_MDL_00006
-    ("PowerCenter data type DATE … precision 29 not supported"). Each type
-    has a canonical precision the engine accepts.
+def _pc_field(data_type, precision, scale):
+    """Map a source column to the (dataType, pcType, precision, scale) the
+    IDMC Snowflake connector introspects, so create_profile's declared field
+    matches what the profiling service validates against. Returns a 4-tuple.
     """
-    dt = (data_type or "").lower()
-    if dt == "date":                                                return 19
-    if dt in ("timestamp","datetime","datetime2","timestamptz"):    return 26
-    if dt in ("number","numeric","decimal","int","integer","bigint"): return 38
-    if dt in ("float","double","real"):                             return 15
-    if dt in ("smallint","tinyint"):                                return 5
-    if dt in ("boolean","bool","bit"):                              return 1
-    return 255  # varchar / string / catch-all
+    dt = (data_type or "").lower().split("(")[0].strip()
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    if dt == "date" or dt.startswith("timestamp") or dt in (
+        "datetime", "datetime2", "timestamptz", "smalldatetime",
+    ):
+        return "date", "DATE", 19, 0
+
+    if dt in _TEXT_TYPES:
+        n = _int(precision) or 255
+        for b in _NSTRING_LADDER:
+            if n <= b:
+                return "varchar", "NSTRING", b, 0
+        return "varchar", "NSTRING", _NSTRING_LADDER[-1], 0
+
+    # numeric / float / boolean / anything else -> connector reports NSTRING(50)
+    return "varchar", "NSTRING", 50, 0
 
 
 def _split_object_path(object_name: str) -> tuple[str, str]:
@@ -3060,25 +3073,25 @@ def create_profile(
     # (PROFILE_MDL_00006). Any source can declare more — Snowflake NUMBER(38,2),
     # Databricks DECIMAL(38). Clamp precision (keep the column and its scale;
     # precision doesn't affect the null/distinct/min/max stats profiling returns).
-    IDMC_MAX_PRECISION = 28
     src_fields: list[dict[str, Any]] = []
     pf_fields:  list[dict[str, Any]] = []
-    precision_capped: list[dict[str, Any]] = []
+    type_coercions: list[dict[str, Any]] = []
     for i, c in enumerate(columns):
         nm = c.get("name")
         if not nm:
             continue
-        dt = c.get("dataType") or "varchar"
-        raw_prec = int(c["precision"]) if c.get("precision") not in (None, "") else _default_precision_for(dt)
-        prec = min(raw_prec, IDMC_MAX_PRECISION)
-        sc   = min(int(c.get("scale") or 0), prec)   # scale can't exceed precision
-        if prec != raw_prec:
-            precision_capped.append({"column": nm, "declared": raw_prec, "capped_to": prec})
-        pct  = c.get("pcType") or _pc_type_for(dt)
+        raw_dt = c.get("dataType") or "varchar"
+        ds_dt, pct, prec, sc = _pc_field(raw_dt, c.get("precision"), c.get("scale"))
+        base_dt = raw_dt.lower().split("(")[0].strip()
+        if pct == "NSTRING" and base_dt not in _TEXT_TYPES:
+            # numeric / boolean / other declared as string to match the
+            # connector's introspection — surface it, don't hide it.
+            type_coercions.append({"column": nm, "source_type": raw_dt,
+                                    "declared_as": f"{pct}({prec})"})
         src_fields.append({
             "id":                 None,
             "name":               nm,
-            "dataType":           dt,
+            "dataType":           ds_dt,
             "precision":          prec,
             "scale":              sc,
             "pcType":             pct,
@@ -3182,7 +3195,7 @@ def create_profile(
         "columns_source":   columns_source,
         "data_source_type": data_source_type,
         "http_status":      r.status_code,
-        "precision_capped": precision_capped,   # columns whose DECIMAL precision was capped to IDMC's ceiling
+        "type_coercions":   type_coercions,   # non-text columns declared as NSTRING to match the connector
     }
 
     if auto_run:

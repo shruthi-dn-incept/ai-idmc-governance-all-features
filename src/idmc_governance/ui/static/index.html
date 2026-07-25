@@ -3031,6 +3031,18 @@ function App() {
       const obj = profileObject || defaultAsset;
       if (!obj) return;
       body = { object_name: obj, database: profileDatabase || undefined, schema: profileSchema || scanSchema || undefined };
+      // The Informatica path resolves the source by sourcePath = DATABASE/SCHEMA.
+      // Without the database segment the Snowflake plugin 500s at run time
+      // (verified: bare "SCHEMA" fails, "DATABASE/SCHEMA" profiles cleanly), so
+      // send create_profile / run_profile a fully-qualified DATABASE/SCHEMA/TABLE.
+      // The warehouse path (compute_*) takes database/schema as separate args and
+      // is left untouched.
+      if (ss.tool === "create_profile" || ss.tool === "run_profile") {
+        const _sc = profileSchema || scanSchema || "";
+        const _db = dbForSchema(_sc) || profileDatabase || "";
+        const _bare = String(obj).split("/").pop();
+        if (_db && _sc) body.object_name = `${_db}/${_sc}/${_bare}`;
+      }
       // create_profile can't resolve columns from CDGC even for a just-scanned
       // table — hand it the list step 2 already holds rather than letting it fail.
       if (ss.tool === "create_profile") {
