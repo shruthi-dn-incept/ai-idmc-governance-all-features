@@ -1387,6 +1387,7 @@ def scan_fetch_columns(
         "column_count":    len(columns),
         "source":          "fetched",
         "columns_preview": [c["name"] for c in columns[:10]],
+        "columns_detail":  [{"name": c.get("name"), "data_type": c.get("data_type", "")} for c in columns],
         "message":         f"Fetched and cached {len(columns)} columns for {table_name}.",
     }
 

@@ -3037,7 +3037,16 @@ function App() {
         const scanCols = (resultsRef.current.scan?.columns || []);
         const forObj = scanCols.find(c => c && c.table === obj) || scanCols[0] || {};
         const detail = forObj.columns_detail || [];
-        if (detail.length) body.columns = detail.map(c => ({ name: c.name, dataType: c.data_type || "" }));
+        // Pass {name, dataType, precision, scale} — split "VARCHAR(120)" / "NUMBER(38,2)"
+        // into base type + precision/scale rather than baking them into dataType, which
+        // create_profile would otherwise use verbatim as the field type.
+        if (detail.length) body.columns = detail.map(c => {
+          const m = /^\s*([A-Za-z_]+)\s*(?:\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\))?/.exec(c.data_type || "");
+          const out = { name: c.name, dataType: (m && m[1]) ? m[1] : (c.data_type || "varchar") };
+          if (m && m[2]) out.precision = parseInt(m[2], 10);
+          if (m && m[3]) out.scale = parseInt(m[3], 10);
+          return out;
+        });
       }
     }
     else if (ss.form === "rule") {

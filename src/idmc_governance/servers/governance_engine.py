@@ -2556,8 +2556,11 @@ PROFILING_API_BASE = os.getenv(
 SNOWFLAKE_DEFAULT_ACCOUNT   = os.getenv("SNOWFLAKE_ACCOUNT",   "ygc42528.us-east-1")
 SNOWFLAKE_DEFAULT_USER      = os.getenv("SNOWFLAKE_USER",      "INCEPT_AGENT_USER")
 SNOWFLAKE_DEFAULT_WAREHOUSE = os.getenv("SNOWFLAKE_WAREHOUSE", "INCEPT_WH")
-SNOWFLAKE_DEFAULT_DATABASE  = os.getenv("SNOWFLAKE_DATABASE",  "INCEPT_GOV_DEV")
-SNOWFLAKE_DEFAULT_SCHEMA    = os.getenv("SNOWFLAKE_SCHEMA",    "DQ_TEST")
+# No hard-coded default. The UI derives {database, schema} from the schema map
+# and passes them on every profiling call; a call arriving without them is an
+# error to surface, not a silent fall-back to one org's dev database.
+SNOWFLAKE_DEFAULT_DATABASE  = os.getenv("SNOWFLAKE_DATABASE")
+SNOWFLAKE_DEFAULT_SCHEMA    = os.getenv("SNOWFLAKE_SCHEMA")
 
 
 def _snowflake_connect():
@@ -2684,6 +2687,11 @@ def compute_profile_from_snowflake(
     """
     db = database or SNOWFLAKE_DEFAULT_DATABASE
     sc = schema   or SNOWFLAKE_DEFAULT_SCHEMA
+    if not db or not sc:
+        raise RuntimeError(
+            f"No database/schema specified for {object_name!r} — the schema map should "
+            f"supply these, or set SNOWFLAKE_DATABASE / SNOWFLAKE_SCHEMA."
+        )
     full_table = f"{_quote_ident(db)}.{_quote_ident(sc)}.{_quote_ident(object_name)}"
     log.info("compute_profile_from_snowflake: %s.%s.%s", db, sc, object_name)
 
