@@ -2691,9 +2691,13 @@ def compute_profile_from_snowflake(
     try:
         cur = conn.cursor()
 
-        # 1) Discover columns + types from INFORMATION_SCHEMA.
+        # 1) Discover columns + types from INFORMATION_SCHEMA — qualified with the
+        # target database. INFORMATION_SCHEMA is database-scoped, and the connection
+        # opens on SNOWFLAKE_DATABASE (INCEPT_GOV_DEV); an UNQUALIFIED reference only
+        # ever sees that one database, so any table elsewhere (GOVERNANCE_SCALE_TEST,
+        # _C, RND, …) fell through to "not found". Qualify by db so every database works.
         cur.execute(
-            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            f"SELECT COLUMN_NAME, DATA_TYPE FROM {_quote_ident(db)}.INFORMATION_SCHEMA.COLUMNS "
             "WHERE TABLE_CATALOG = %s AND TABLE_SCHEMA = %s AND TABLE_NAME = %s "
             "ORDER BY ORDINAL_POSITION",
             (db, sc, object_name),

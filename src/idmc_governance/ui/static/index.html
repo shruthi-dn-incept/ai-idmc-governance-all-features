@@ -172,10 +172,21 @@ const STEPS = [
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const STATUS = { idle: "idle", running: "running", done: "done", error: "error", skipped: "skipped" };
 
-// Actual Snowflake databases (SHOW DATABASES — standard user databases only).
-// The MCC catalog does not carry the database (discover's `database` is empty),
-// so step 3 offers this authoritative list rather than guessing from a source.
-const SNOWFLAKE_DATABASES = ["INCEPT_GOV_DEV", "GOVERNANCE_SCALE_TEST", "GOVERNANCE_SCALE_TEST_C", "GOVERNANCE", "DATA_PRODUCTS", "RND"];
+// Schema → Snowflake database. The MCC catalog does not carry the database
+// (discover's `database` is empty for every source), and it cannot tell you which
+// database a schema lives in — so the app holds the mapping. Step 3 derives the
+// database from the selected schema via this map. One place: adding a database
+// later is a one-line change here. (Source: SHOW DATABASES / SHOW SCHEMAS.)
+const SCHEMA_TO_DATABASE = {
+  DQ_TEST: "INCEPT_GOV_DEV",            DQ_FRAMEWORK: "INCEPT_GOV_DEV",
+  GOVTEST_CLAIMS: "GOVERNANCE_SCALE_TEST",   GOVTEST_CLINICAL: "GOVERNANCE_SCALE_TEST",
+  GOVTEST_MEMBER: "GOVERNANCE_SCALE_TEST",   GOVTEST_PROVIDER: "GOVERNANCE_SCALE_TEST",
+  GOVTEST_BILLING: "GOVERNANCE_SCALE_TEST_C", GOVTEST_ENROLLMENT: "GOVERNANCE_SCALE_TEST_C",
+  GOVTEST_RISK: "GOVERNANCE_SCALE_TEST_C",    GOVTEST_UTILIZATION: "GOVERNANCE_SCALE_TEST_C",
+  REGISTRY: "GOVERNANCE",               RND_CLINICAL: "RND",
+};
+// Case-insensitive lookup — Snowflake schema names are upper-case in the catalog.
+const dbForSchema = (schema) => SCHEMA_TO_DATABASE[schema] || SCHEMA_TO_DATABASE[(schema || "").toUpperCase()] || "";
 const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "data_quality", "publish_governance", "create_collection", "publish_marketplace", "configure_delivery", "consumer_access"]);
 
 // Cross-cutting requirement 1: one shared interceptor. 401, or 403 carrying
@@ -3175,10 +3186,10 @@ function App() {
         // discover grouping; read that state (fallback to scanSchema) and carry the
         // {database, schema, table} triple — the fix for the wrong-schema failure.
         const schemaArg = profileSchema || scanSchema || undefined;
-        // The catalog exposes no database level, so step 2's top selection is a
-        // source (schema-ish), not a DB — do not carry it as the database. Step 3
-        // resolves the real DB from its own prefill / editable field (config default).
-        const dbArg = profileDatabase || undefined;
+        // Database is derived from the schema via SCHEMA_TO_DATABASE — the catalog
+        // can't supply it. Mapped schema → its real DB; unmapped → the editable
+        // fallback (never a hard-coded default).
+        const dbArg = dbForSchema(schemaArg) || profileDatabase || undefined;
         if (profileMode === "local") {
           data = await apiPost("/api/step/profile", { object_name: objName, mode: "local", database: dbArg, schema: schemaArg }, sig);
         } else {
@@ -3618,24 +3629,31 @@ function App() {
 
   // Resolve {database, schema, source, snowflake?} for a table from the discover
   // grouping, so step 3 sends the triple compute_profile_from_snowflake needs.
-  const _cfgDbPath = (config?.dq_schema_path || "").split("/");   // e.g. INCEPT_GOV_DEV/DQ_TEST
-  const _NON_SF = /databricks|adls|gen2|_s3\b|s3_|delta|volume|bronze|silver|gold|accuweather|bakehouse|nyctaxi|healthverity/i;
   const resolveProfileLoc = (table) => {
     for (const src of discoverSources) {
       for (const db of (src.databases || [{ database: "", schemas: src.schemas || [] }])) {
         for (const sc of (db.schemas || [])) {
           if ((sc.tables || []).some(t => t.name === table)) {
-            const snowflake = !_NON_SF.test(`${src.source} ${sc.schema} ${db.database}`);
-            return { source: src.source, schema: sc.schema, database: db.database || _cfgDbPath[0] || "", snowflake };
+            // Derive the database from the schema via SCHEMA_TO_DATABASE — the
+            // catalog can't tell us, and there is NO hard-coded default (defaulting
+            // to INCEPT_GOV_DEV mis-profiled every table outside it). A schema is
+            // Snowflake-warehouse-able iff it maps to a database.
+            const database = db.database || dbForSchema(sc.schema);
+            return { source: src.source, schema: sc.schema, database, snowflake: !!database };
           }
         }
       }
     }
-    return { source: scanSource || "", schema: scanSchema || _cfgDbPath[1] || "", database: _cfgDbPath[0] || "", snowflake: true };
+    const schema = scanSchema || "";
+    return { source: scanSource || "", schema, database: dbForSchema(schema), snowflake: !!dbForSchema(schema) };
   };
   const profileLoc = resolveProfileLoc(profileObjectEffective);
   const profileSchemaEff = profileSchema || profileLoc.schema;
-  const profileDatabaseEff = profileDatabase || profileLoc.database;
+  // Database is DERIVED from the schema (read-only when mapped). Unmapped schema
+  // (Databricks / unknown) → the editable fallback, never a hard-coded default.
+  const _mappedDb = dbForSchema(profileSchemaEff);
+  const schemaMapped = !!_mappedDb;
+  const profileDatabaseEff = _mappedDb || profileDatabase || "";
 
   // When the profiled table changes, reset schema/database to the resolved
   // values (steward can still override in the inputs).
@@ -4168,14 +4186,20 @@ function App() {
                 {/* Selector carries {database, schema} — not just the table name */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-slate-500 font-medium mb-1">Database</label>
-                    <select value={profileDatabaseEff} onChange={e => setProfileDatabase(e.target.value)}
-                      className={INPUT_CLS + " font-mono"}>
-                      {!SNOWFLAKE_DATABASES.includes(profileDatabaseEff) && (
-                        <option value={profileDatabaseEff}>{profileDatabaseEff || "Select a database…"}</option>
-                      )}
-                      {SNOWFLAKE_DATABASES.map(db => <option key={db} value={db}>{db}</option>)}
-                    </select>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Database <span className="text-slate-400 font-normal">{schemaMapped ? "· derived from schema" : "· set manually"}</span></label>
+                    {schemaMapped ? (
+                      <div className={INPUT_CLS + " font-mono bg-slate-100 text-slate-600 flex items-center justify-between"}
+                        title="Derived from the selected schema — the catalog does not carry the database, so the app maps it. Not editable.">
+                        <span>{profileDatabaseEff}</span>
+                        <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded uppercase tracking-wide">read-only</span>
+                      </div>
+                    ) : (
+                      <>
+                        <input type="text" value={profileDatabase} onChange={e => setProfileDatabase(e.target.value)}
+                          placeholder="type a database…" className={INPUT_CLS + " font-mono"}/>
+                        <p className="text-[11px] text-amber-600 mt-1">Not a Snowflake warehouse-path schema — set the database manually, or use the Informatica path.</p>
+                      </>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Schema</label>
