@@ -1277,9 +1277,23 @@ async def step_data_quality(req: EstimateRequest = EstimateRequest()):
     return result
 
 
+class CreateCollectionRequest(BaseModel):
+    category: str | None = None          # → create_cdmp_category(name=…)
+    collection_name: str | None = None   # → create_cdmp_data_collection(name=…)
+    asset_name: str | None = None        # → create_cdmp_data_asset / link_asset_to_collection
+
+
 @app.post("/api/step/create_collection")
-async def step_create_collection():
+async def step_create_collection(req: CreateCollectionRequest = CreateCollectionRequest()):
     result = {}
+    # Forward the step-12 card inputs to the tools that accept them (each already
+    # takes optional params; blank fields fall through to the tool's own default).
+    tool_args = {
+        "create_cdmp_category":        ({"name": req.category} if req.category else {}),
+        "create_cdmp_data_asset":      ({"asset_name": req.asset_name} if req.asset_name else {}),
+        "create_cdmp_data_collection": ({"name": req.collection_name} if req.collection_name else {}),
+        "link_asset_to_collection":    ({"asset_name": req.asset_name} if req.asset_name else {}),
+    }
     # link_asset_to_collection must run LAST: it reads the collection_id that
     # create_cdmp_data_collection writes into govern state. Without it, step 12
     # creates a collection, reports success, and links no asset — a silent
@@ -1291,7 +1305,7 @@ async def step_create_collection():
         ("link_asset_to_collection",    "link"),
     ]:
         try:
-            result[key] = await _call(AI_GOVERNANCE_URL, tool, {})
+            result[key] = await _call(AI_GOVERNANCE_URL, tool, tool_args.get(tool, {}))
         except Exception as e:
             result[key] = {"status": "failed", "error": str(e)}
     return result
@@ -1409,9 +1423,18 @@ async def step_publish_marketplace_full():
     return result
 
 
+class ConfigureDeliveryRequest(BaseModel):
+    usage_contexts: list[str] | None = None   # → create_cdmp_usage_contexts(contexts=…)
+    target_type: str | None = None            # → create_delivery_target(target_type=…)
+
+
 @app.post("/api/step/configure_delivery")
-async def step_configure_delivery():
+async def step_configure_delivery(req: ConfigureDeliveryRequest = ConfigureDeliveryRequest()):
     result = {}
+    tool_args = {
+        "create_cdmp_usage_contexts": ({"contexts": req.usage_contexts} if req.usage_contexts else {}),
+        "create_delivery_target":     ({"target_type": req.target_type} if req.target_type else {}),
+    }
     for tool, key in [
         ("create_cdmp_usage_contexts", "usage_context"),
         ("create_delivery_template",   "delivery_template"),
@@ -1419,7 +1442,7 @@ async def step_configure_delivery():
         ("create_delivery_target",     "delivery_target"),
     ]:
         try:
-            result[key] = await _call(AI_GOVERNANCE_URL, tool, {})
+            result[key] = await _call(AI_GOVERNANCE_URL, tool, tool_args.get(tool, {}))
         except Exception as e:
             result[key] = {"status": "failed", "error": str(e)}
     return result

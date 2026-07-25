@@ -188,6 +188,10 @@ const SCHEMA_TO_DATABASE = {
 // Case-insensitive lookup — Snowflake schema names are upper-case in the catalog.
 const dbForSchema = (schema) => SCHEMA_TO_DATABASE[schema] || SCHEMA_TO_DATABASE[(schema || "").toUpperCase()] || "";
 const SKIPPABLE = new Set(["taxonomy", "domain_structure", "curate", "data_quality", "publish_governance", "create_collection", "publish_marketplace", "configure_delivery", "consumer_access"]);
+// Step 14 input-card options. Usage contexts mirror the tool's standard set;
+// delivery targets map the segmented labels to the tool's target_type values.
+const USAGE_CONTEXT_OPTIONS = ["Analytics", "Reporting", "Finance", "Operations"];
+const DELIVERY_TARGETS = [["SNOWFLAKE", "Snowflake share"], ["FILE", "File"], ["TICKET", "Ticket"]];
 
 // Cross-cutting requirement 1: one shared interceptor. 401, or 403 carrying
 // REPO_38205 (and kin), means the IDMC session died — the most likely demo
@@ -2894,6 +2898,8 @@ function App() {
   const [config, setConfig] = useState(null);
   // Step 1 (Phase 6): catalog source scan inputs
   const [mccForm, setMccForm] = useState({ tables: "", schema_hint: "" });
+  const [collectionForm, setCollectionForm] = useState({ category: "", collection_name: "", asset: "" });
+  const [deliveryForm, setDeliveryForm] = useState({ usage_contexts: [...USAGE_CONTEXT_OPTIONS], target_type: "SNOWFLAKE" });
   // Gate 2 (curate): proposed links awaiting review — nothing written until approve
   const [curMatches, setCurMatches] = useState([]);
   const [curSelected, setCurSelected] = useState(new Set());
@@ -3418,9 +3424,20 @@ function App() {
         if (!monitorForm.asset_name) throw new Error("Enter an asset name above — Monitor Quality inherits no upstream selection.");
         data = await apiPost("/api/step/monitor_quality", { asset_name: monitorForm.asset_name }, sig);
       }
-      else if (stepId === "create_collection")     data = await apiPost("/api/step/create_collection", {}, sig);
+      else if (stepId === "create_collection") {
+        const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+        const asset = collectionForm.asset || profileObject || defaultAsset || scanned[0] || "";
+        data = await apiPost("/api/step/create_collection", {
+          category:        collectionForm.category || undefined,
+          collection_name: collectionForm.collection_name || undefined,
+          asset_name:      asset || undefined,
+        }, sig);
+      }
       else if (stepId === "publish_marketplace")   data = await apiPost("/api/step/publish_marketplace", {}, sig);
-      else if (stepId === "configure_delivery")    data = await apiPost("/api/step/configure_delivery", {}, sig);
+      else if (stepId === "configure_delivery")    data = await apiPost("/api/step/configure_delivery", {
+        usage_contexts: deliveryForm.usage_contexts.length ? deliveryForm.usage_contexts : undefined,
+        target_type:    deliveryForm.target_type || undefined,
+      }, sig);
       else if (stepId === "consumer_access")       data = await apiPost("/api/step/consumer_access", {}, sig);
 
       abortRef.current = null;
@@ -3456,7 +3473,7 @@ function App() {
       setStatus(stepId, STATUS.error);
       return "error";
     }
-  }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode, profileSchema, profileDatabase]);
+  }, [scanTable, scanSchema, scanSource, monitorForm, profileObject, profileMode, profileSchema, profileDatabase, collectionForm, deliveryForm, defaultAsset]);
 
   // ── Run-all control ─────────────────────────────────────────────────────────
   // A small secondary control, not a primary CTA. Walks the ladder top to
@@ -4696,6 +4713,107 @@ function App() {
                 approving={domainApproving}
               />
             )}
+
+            {/* Step 12 input card — Collection. Category + name + a data-asset
+                selector (each asset with its quality score). Create forwards the
+                values to the composite route (which now accepts them). */}
+            {activeStep === "create_collection" && (() => {
+              const scanned = (results.scan?.columns || []).map(c => c?.table).filter(Boolean);
+              const uniq = [...new Set([profileObject, defaultAsset, ...scanned].filter(Boolean))];
+              const mon = results.monitor_quality || {};
+              const monAsset = mon.asset || mon.asset_name || monitorForm.asset_name;
+              const assets = uniq.map(name => ({
+                name,
+                score: (monAsset && String(monAsset).toLowerCase() === String(name).toLowerCase() && mon.composite != null) ? mon.composite : null,
+              }));
+              const selected = collectionForm.asset || assets[0]?.name || "";
+              const running = statuses.create_collection === STATUS.running;
+              return (
+                <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
+                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Collection</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-500 font-medium mb-1">Category</label>
+                      <input type="text" value={collectionForm.category}
+                        onChange={e => setCollectionForm(f => ({ ...f, category: e.target.value }))}
+                        placeholder="Defaults to the governance domain" className={INPUT_CLS}/>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 font-medium mb-1">Collection name</label>
+                      <input type="text" value={collectionForm.collection_name}
+                        onChange={e => setCollectionForm(f => ({ ...f, collection_name: e.target.value }))}
+                        placeholder="Defaults to '<table> — Governed Dataset'" className={INPUT_CLS}/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Data asset</label>
+                    <div className="border border-slate-300 rounded-lg divide-y divide-slate-100 bg-white overflow-hidden">
+                      {assets.length === 0
+                        ? <div className="text-xs text-slate-400 italic p-3">No scanned asset — scan a table first (the route falls back to pipeline state).</div>
+                        : assets.map(a => (
+                          <label key={a.name} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50">
+                            <input type="radio" name="collasset" checked={selected === a.name}
+                              onChange={() => setCollectionForm(f => ({ ...f, asset: a.name }))}/>
+                            <span className="text-xs font-mono text-slate-700 flex-1">{a.name}</span>
+                            <span className={`text-xs font-bold ${a.score == null ? "text-slate-300" : a.score >= 90 ? "text-emerald-600" : a.score >= 70 ? "text-amber-600" : "text-red-600"}`}>
+                              {a.score == null ? "unscored" : a.score.toFixed(1) + "%"}
+                            </span>
+                          </label>
+                        ))}
+                    </div>
+                  </div>
+                  <button onClick={() => runStep("create_collection")} disabled={running}
+                    className="px-4 py-2 rounded-lg font-semibold text-sm bg-brand text-white hover:bg-brand-dark disabled:opacity-50 shadow-sm">
+                    {running ? "Creating…" : "Create collection"}
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* Step 14 input card — Delivery and terms. Usage contexts as a
+                checkbox list, delivery target as a segmented control; Save forwards
+                both to the composite route. Amber footer on the signature caveat. */}
+            {activeStep === "configure_delivery" && (() => {
+              const running = statuses.configure_delivery === STATUS.running;
+              return (
+                <div className="bg-slate-50 rounded-xl p-4 space-y-4 border border-slate-300 shadow-sm">
+                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Delivery and terms</div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1.5">Usage contexts</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {USAGE_CONTEXT_OPTIONS.map(ctx => {
+                        const on = deliveryForm.usage_contexts.includes(ctx);
+                        return (
+                          <label key={ctx} className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 rounded-lg cursor-pointer hover:border-brand text-xs">
+                            <input type="checkbox" checked={on}
+                              onChange={() => setDeliveryForm(f => ({ ...f, usage_contexts: on ? f.usage_contexts.filter(c => c !== ctx) : [...f.usage_contexts, ctx] }))}/>
+                            <span className="text-slate-700">{ctx}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 font-medium mb-1.5">Delivery target</label>
+                    <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+                      {DELIVERY_TARGETS.map(([val, label]) => (
+                        <button key={val} onClick={() => setDeliveryForm(f => ({ ...f, target_type: val }))}
+                          className={`px-3 py-1.5 text-xs font-medium border-r border-slate-300 last:border-r-0 ${deliveryForm.target_type === val ? "bg-brand text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={() => runStep("configure_delivery")} disabled={running}
+                    className="px-4 py-2 rounded-lg font-semibold text-sm bg-brand text-white hover:bg-brand-dark disabled:opacity-50 shadow-sm">
+                    {running ? "Saving…" : "Save delivery configuration"}
+                  </button>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+                    Where a signed acknowledgement of terms is required before delivery, remove this step from the automated flow and capture the signature manually — an automated Save cannot record a wet signature.
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Gate 3 — Recommend Rules: SAME panel, grouped by DQ dimension,
                 evidence as secondary text. Approving pushes into step 8. */}
