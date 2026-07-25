@@ -3170,9 +3170,10 @@ function App() {
         // discover grouping; read that state (fallback to scanSchema) and carry the
         // {database, schema, table} triple — the fix for the wrong-schema failure.
         const schemaArg = profileSchema || scanSchema || undefined;
-        // Carry the database chosen at step 2 forward when step 3's own prefill
-        // didn't set one — the {database, schema, table} triple is inherited, not re-picked.
-        const dbArg = profileDatabase || scanDatabase || undefined;
+        // The catalog exposes no database level, so step 2's top selection is a
+        // source (schema-ish), not a DB — do not carry it as the database. Step 3
+        // resolves the real DB from its own prefill / editable field (config default).
+        const dbArg = profileDatabase || undefined;
         if (profileMode === "local") {
           data = await apiPost("/api/step/profile", { object_name: objName, mode: "local", database: dbArg, schema: schemaArg }, sig);
         } else {
@@ -3951,8 +3952,11 @@ function App() {
             {activeStep === "scan" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
                 {(() => {
-                  // Cascading Database → Schema → Table, all from step 1's
-                  // catalog_sources_grouped (source → databases → schemas → tables).
+                  // Cascading Source → Schema → Table from step 1's catalog_sources_grouped.
+                  // NOTE: this catalog does not expose a database level — the discover
+                  // payload's `database` is empty for every source — so the top control is
+                  // the catalog source (schema-ish), not a database. Step 3 resolves the
+                  // real Snowflake database from its own field (config default / editable).
                   // No free text: identifier case is significant against INFORMATION_SCHEMA
                   // and a typo is indistinguishable from a missing grant, so these stay
                   // dropdowns even though every other selector degrades to text
@@ -3972,7 +3976,7 @@ function App() {
                         <div className="flex-1">
                           <div className="text-sm font-semibold text-slate-700">Discover hasn't run yet</div>
                           <div className="text-xs text-slate-500 mt-1 leading-relaxed">
-                            The database, schema and table pickers populate from the catalog. They are dropdowns rather than
+                            The source, schema and table pickers populate from the catalog. They are dropdowns rather than
                             free text on purpose — identifier case matters, and a typed name that doesn't match returns
                             "not found" indistinguishably from a missing grant. Run Discover to load the catalog.
                           </div>
@@ -4004,19 +4008,19 @@ function App() {
                   };
                   return (
                     <>
-                      {/* Database */}
+                      {/* Source (the catalog has no database level — see note above) */}
                       <div>
-                        <label className="block text-xs text-slate-500 font-medium mb-1">Database</label>
+                        <label className="block text-xs text-slate-500 font-medium mb-1">Source</label>
                         <select value={scanDatabase} onChange={e => pickDatabase(e.target.value)} className={SEL}>
-                          <option value="">Select a database…</option>
+                          <option value="">Select a source…</option>
                           {databases.map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                       </div>
-                      {/* Schema — enabled once a database is chosen */}
+                      {/* Schema — enabled once a source is chosen */}
                       <div>
                         <label className="block text-xs text-slate-500 font-medium mb-1">Schema</label>
                         <select value={scanSchema} onChange={e => pickSchema(e.target.value)} className={SEL} disabled={!scanDatabase}>
-                          <option value="">{scanDatabase ? "Select a schema…" : "Select a database first"}</option>
+                          <option value="">{scanDatabase ? "Select a schema…" : "Select a source first"}</option>
                           {schemasInDb.length > 0 && totalTablesInDb > 0 && (
                             <option value="__ALL_SCHEMAS__">⚡ All schemas ({totalTablesInDb.toLocaleString()} tables total — samples a few, estimates full run)</option>
                           )}
