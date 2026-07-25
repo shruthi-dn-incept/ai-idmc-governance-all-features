@@ -2277,32 +2277,113 @@ function TrendRow({ entry, tone }) {
   );
 }
 
+// Inline SVG line chart for score trend. No chart lib (the page is self-contained):
+// plots each rule's point series over time, a dashed quality-floor line, and marks
+// breach points (below the floor) in red. Two-point series render as a short line.
+function TrendChart({ series, floor }) {
+  const W = 640, H = 240, padL = 30, padR = 14, padT = 14, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const times = series.flatMap(s => s.points).map(p => Date.parse(p.t)).filter(n => !isNaN(n));
+  const tMin = times.length ? Math.min(...times) : 0;
+  const tMax = times.length ? Math.max(...times) : 1;
+  const singleTime = !(tMax > tMin);
+  const xFor = (t, i, n) => singleTime ? (padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW))
+                                       : (padL + ((Date.parse(t) - tMin) / (tMax - tMin)) * plotW);
+  const yFor = v => padT + (1 - Math.max(0, Math.min(100, v)) / 100) * plotH;
+  const stroke = t => t === "down" ? "#dc2626" : t === "up" ? "#059669" : "#94a3b8";
+  const dstr = ms => { const d = new Date(ms); return isNaN(d) ? "" : d.toISOString().slice(0, 10); };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 260 }} preserveAspectRatio="xMidYMid meet">
+      {[0, 50, 100].map(v => (
+        <g key={v}>
+          <line x1={padL} y1={yFor(v)} x2={W - padR} y2={yFor(v)} stroke="#e2e8f0" strokeWidth="1"/>
+          <text x={padL - 5} y={yFor(v) + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{v}</text>
+        </g>
+      ))}
+      <line x1={padL} y1={yFor(floor)} x2={W - padR} y2={yFor(floor)} stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5 4"/>
+      <text x={W - padR} y={yFor(floor) - 4} textAnchor="end" fontSize="9" fill="#d97706">{floor}% floor</text>
+      {series.map((s, si) => {
+        const n = s.points.length;
+        const d = s.points.map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.t, i, n).toFixed(1)},${yFor(p.v).toFixed(1)}`).join(" ");
+        return (
+          <g key={si}>
+            <path d={d} fill="none" stroke={stroke(s.tone)} strokeWidth="2"/>
+            {s.points.map((p, i) => {
+              const breach = p.v < floor;
+              return <circle key={i} cx={xFor(p.t, i, n)} cy={yFor(p.v)} r={breach ? 4 : 2.5}
+                fill={breach ? "#dc2626" : stroke(s.tone)} stroke={breach ? "#fff" : "none"} strokeWidth={breach ? 1.5 : 0}/>;
+            })}
+          </g>
+        );
+      })}
+      {times.length > 0 && !singleTime && (
+        <g>
+          <text x={padL} y={H - 7} textAnchor="start" fontSize="9" fill="#94a3b8">{dstr(tMin)}</text>
+          <text x={W - padR} y={H - 7} textAnchor="end" fontSize="9" fill="#94a3b8">{dstr(tMax)}</text>
+        </g>
+      )}
+    </svg>
+  );
+}
+
 function TrendsResult({ data }) {
+  const floor = 70;   // quality floor — the amber/red band boundary used across the app
+  const toneOf = { degrading: "down", improving: "up", stable: "flat" };
+  const series = [];
+  ["degrading", "improving", "stable"].forEach(k => (data?.[k] || []).forEach(e => {
+    const pts = ((e.series && e.series.length)
+      ? e.series.map(p => ({ t: p.t, v: Number(p.v) }))
+      : [{ t: e.first_at, v: Number(e.first) }, { t: e.last_at, v: Number(e.last) }]
+    ).filter(p => Number.isFinite(p.v));
+    if (pts.length >= 2) series.push({ rule: e.rule, tone: toneOf[k], points: pts });
+  }));
+  const noHist = (data?.no_history || []).length;
+  // Amber footer: rules whose latest point is below the floor, earliest crossing first.
+  const breached = series
+    .map(s => ({ rule: s.rule, last: s.points[s.points.length - 1].v, cross: (s.points.find(p => p.v < floor) || s.points[0]).t }))
+    .filter(s => s.last < floor)
+    .sort((a, b) => Date.parse(a.cross) - Date.parse(b.cross));
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
       <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend — last {data?.lookback_days} days (threshold ±{data?.threshold})</span>
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend — last {data?.lookback_days} days · ±{data?.threshold} pt degradation</span>
         <div className="flex gap-3 text-xs">
           <span className="text-red-600 font-semibold">{(data?.degrading || []).length} degrading</span>
           <span className="text-emerald-600 font-semibold">{(data?.improving || []).length} improving</span>
           <span className="text-slate-500">{(data?.stable || []).length} stable</span>
         </div>
       </div>
-      <div className="divide-y divide-slate-50">
-        {(data?.degrading || []).map((e, i) => <TrendRow key={"d" + i} entry={e} tone="down"/>)}
-        {(data?.improving || []).map((e, i) => <TrendRow key={"i" + i} entry={e} tone="up"/>)}
-        {(data?.stable || []).map((e, i) => <TrendRow key={"s" + i} entry={e} tone="flat"/>)}
-        {(data?.no_history || []).length > 0 && (
-          <div className="px-4 py-2 text-xs text-slate-400 italic">
-            {(data?.no_history || []).length} rule(s) have fewer than 2 trend points — a trend needs at least two scans (backfill with propagate_dq_score on step 10).
+      {series.length === 0 ? (
+        <div className="p-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+            <div className="font-semibold mb-0.5">Not enough score history to plot a trend</div>
+            A trend needs at least two DQ scans on this asset. CDGC currently exposes {noHist} rule{noHist === 1 ? "" : "s"} with a single score point{noHist ? "" : " (no scored rules found)"}. Re-run <strong>Publish to Catalog</strong> (step 10) after the next scan cycle to build history, then re-check trends.
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="p-3 space-y-2">
+          <TrendChart series={series} floor={floor}/>
+          {breached.length
+            ? <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-800">
+                {breached.length} rule{breached.length > 1 ? "s" : ""} below the {floor}% floor — <span className="font-mono">{breached[0].rule}</span> crossed on {new Date(Date.parse(breached[0].cross)).toISOString().slice(0, 10)} and has not recovered (now {breached[0].last.toFixed(0)}%).
+              </div>
+            : <div className="text-xs text-slate-400 px-1">All plotted rules stay at or above the {floor}% floor.</div>}
+          {series.some(s => s.points.length === 2) && (
+            <div className="text-[10px] text-slate-400 px-1 italic">Two-point series reflect CDGC's old→current score; the line lengthens as more scans accrue.</div>
+          )}
+          <div className="divide-y divide-slate-50 border-t border-slate-100">
+            {(data?.degrading || []).map((e, i) => <TrendRow key={"d" + i} entry={e} tone="down"/>)}
+            {(data?.improving || []).map((e, i) => <TrendRow key={"i" + i} entry={e} tone="up"/>)}
+            {(data?.stable || []).map((e, i) => <TrendRow key={"s" + i} entry={e} tone="flat"/>)}
+          </div>
+          {noHist > 0 && <div className="px-1 text-xs text-slate-400 italic">{noHist} rule(s) have a single score point and aren't plotted.</div>}
+        </div>
+      )}
     </div>
   );
 }
 
-function RemediationResult({ data }) {
+function RemediationResult({ data, onGoToStep }) {
   const seeds = data?.suggestion_seeds || [];
   return (
     <div className="space-y-3">
@@ -2316,13 +2397,21 @@ function RemediationResult({ data }) {
         : (
           <div className="border border-slate-200 rounded-xl bg-white divide-y divide-slate-100 overflow-hidden">
             {seeds.map((s, i) => (
-              <div key={i} className="px-4 py-2.5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-mono font-semibold text-slate-700">{s.rule}</span>
-                  <DimChip dim={s.dimension}/>
-                  {s.exception != null && <span className="text-xs text-red-500">{s.exception} exceptions</span>}
+              <div key={i} className="px-4 py-2.5 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-mono font-semibold text-slate-700">{s.rule}</span>
+                    <DimChip dim={s.dimension}/>
+                    {s.exception != null && <span className="text-xs text-red-500">{s.exception} exceptions</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">→ {s.suggested_focus}</div>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">→ {s.suggested_focus}</div>
+                {onGoToStep && (
+                  <button onClick={() => onGoToStep("data_quality")}
+                    className="shrink-0 px-2 py-1 rounded-md text-xs font-semibold border border-brand text-brand hover:bg-indigo-50 whitespace-nowrap">
+                    Fix in step 8 →
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -2331,12 +2420,27 @@ function RemediationResult({ data }) {
   );
 }
 
-function AlertResult({ data }) {
+function AlertResult({ data, monitorContext }) {
   const a = data?.this_alert || {};
+  const mc = monitorContext || {};
+  const thr = a.threshold;
+  // "Firing" is derived from the live monitor data in this step: a degrading rule
+  // whose drop meets the alert threshold, or the composite below the quality floor.
+  const degradingHit = Array.isArray(mc.degrading) && thr != null && mc.degrading.some(d => Math.abs(Number(d.delta)) >= Number(thr));
+  const belowFloor = mc.composite != null && mc.floor != null && mc.composite < mc.floor;
+  const firing = !!(degradingHit || belowFloor);
   return (
     <div className="space-y-3">
-      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
-        ✓ Alert <span className="font-mono">{data?.id}</span> registered — <strong>{a.asset_name}</strong>: drop ≥ {a.threshold} pts over {a.lookback_days}d → notify {a.notify_email}
+      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+        <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Alert threshold</div>
+        <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
+          <span className="text-xs font-mono font-semibold text-slate-700 flex-1 min-w-0 truncate" title={a.asset_name}>{a.asset_name || "—"}</span>
+          <span className="text-xs text-slate-500">drop ≥ <strong>{a.threshold ?? "?"}</strong> pts / {a.lookback_days ?? "?"}d</span>
+          <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${firing ? "bg-red-100 text-red-700 border-red-300" : "bg-emerald-100 text-emerald-700 border-emerald-300"}`}>
+            {firing ? "● FIRING" : "○ armed"}
+          </span>
+        </div>
+        {a.notify_email && <div className="px-4 pb-2 -mt-1 text-[10px] text-slate-400">notifies {a.notify_email}{data?.id ? ` · id ${data.id}` : ""}</div>}
       </div>
       {/* Informational, not a warning — and be precise about where the alert lives */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-700">
@@ -5200,6 +5304,13 @@ function App() {
             {activeStep === "monitor_quality" && (() => {
               const sub = subResults.monitor_quality || {};
               if (sub.check_score_trends === undefined && sub.recommend_remediation === undefined && sub.alert_on_degradation === undefined) return null;
+              // Context the alert panel uses to decide "firing": composite score
+              // (from the parent scorecard) and degrading rules (from the trend).
+              const monitorContext = {
+                composite: (results.monitor_quality || {}).composite,
+                degrading: (sub.check_score_trends || {}).degrading,
+                floor: 70,
+              };
               const panel = (label, keyName) => {
                 const d = sub[keyName];
                 const R = SUB_RENDERERS[keyName];
@@ -5211,7 +5322,7 @@ function App() {
                         ? <div className="text-xs text-slate-400 italic">Run <span className="font-mono">{keyName}</span> above to populate.</div>
                         : d?.error
                           ? <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{d.error}</pre></div>
-                          : (R ? <R data={d}/> : <JsonViewer data={d}/>)}
+                          : (R ? <R data={d} onGoToStep={setActiveStep} monitorContext={monitorContext}/> : <JsonViewer data={d}/>)}
                     </div>
                   </div>
                 );

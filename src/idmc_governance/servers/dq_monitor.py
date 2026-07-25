@@ -481,7 +481,11 @@ def check_score_trends(
         entry = {"rule": rule, "first": first, "last": last, "delta": delta,
                  "points": len(pts),
                  "first_at": pts[0]["time"].isoformat(),
-                 "last_at":  pts[-1]["time"].isoformat()}
+                 "last_at":  pts[-1]["time"].isoformat(),
+                 # Full point series (time, value) so the UI can plot a real
+                 # trend line rather than a first->last segment. Two points when
+                 # CDGC only exposes oldScore->score; more when it keeps history.
+                 "series":   [{"t": p["time"].isoformat(), "v": p["value"]} for p in pts]}
         if delta <= -degradation_delta:
             degrading.append(entry)
         elif delta >= degradation_delta:
