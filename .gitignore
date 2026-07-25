@@ -29,6 +29,9 @@ dist/
 docs/*
 !docs/*.md
 !docs/.gitkeep
+# Layout reference for the UI build (mock HTML + its README) — tracked deliberately.
+!docs/reference/
+!docs/reference/**
 
 # Local config for dq_monitor alerts (no IDMC API exposes alert registration;
 # this file is consumed only by sibling cron/agent processes).

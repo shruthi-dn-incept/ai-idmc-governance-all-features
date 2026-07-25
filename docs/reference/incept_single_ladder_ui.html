@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incept IDMC Agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{
+ brand:{DEFAULT:'#6366f1',dark:'#4338ca',light:'#818cf8'},
+ surface:{DEFAULT:'#f1f5f9',raised:'#e2e8f0',border:'#cbd5e1'}}}}}
+</script>
+<style>
+ body{background:#cbd5e1}
+ .scrollbar-thin::-webkit-scrollbar{width:4px}
+ .scrollbar-thin::-webkit-scrollbar-track{background:transparent}
+ .scrollbar-thin::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:2px}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+ .pulse{animation:pulse-dot 1.4s ease-in-out infinite}
+ [contenteditable]:focus{outline:none;background:#fff;box-shadow:0 0 0 2px #c7d2fe}
+ .busy{color:transparent!important;position:relative;pointer-events:none}
+ .busy::after{content:'';position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-6px 0 0 -6px;
+  border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+ .busy.lt::after{border-color:rgba(0,0,0,.15);border-top-color:#6366f1}
+</style>
+</head>
+<body class="h-screen overflow-hidden text-slate-800">
+<div class="flex h-screen">
+
+<aside class="w-[264px] bg-white border-r border-slate-200 flex flex-col shrink-0">
+  <div class="px-4 py-3.5 border-b border-slate-200 flex items-center gap-2">
+    <div class="w-7 h-7 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">I</div>
+    <div><div class="text-sm font-bold leading-tight">Incept IDMC Agent</div>
+      <div class="text-[10px] text-slate-400 uppercase tracking-wider">Governance Automation</div></div>
+  </div>
+  <div class="flex-1 overflow-y-auto scrollbar-thin p-2" id="ladderWrap"></div>
+  <div class="px-3 py-2.5 border-t border-slate-200">
+    <div class="flex items-center gap-2">
+      <button onclick="resetAll()" class="text-[11px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:border-brand hover:text-brand">Reset</button>
+      <button onclick="runAll(this)" class="flex-1 text-[11px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:border-brand hover:text-brand">Run all unattended</button>
+    </div>
+    <div class="text-[10px] text-slate-400 mt-2 leading-snug">Unattended skips every review gate. Use for reruns, not first passes.</div>
+  </div>
+</aside>
+
+<div class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white border-b border-slate-200 px-6 h-14 flex items-center gap-4 shrink-0">
+    <span class="text-xs bg-slate-50 border border-slate-300 text-slate-600 px-2 py-0.5 rounded shadow-sm">Incept Data Solutions</span>
+    <span id="crumb" class="text-sm font-semibold text-slate-700"></span>
+    <div class="ml-auto flex items-center gap-3">
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="text-xs text-slate-500 ml-1">6 of 6 online</span></div>
+      <div id="pendBox" onclick="openSettings('pol')" style="display:none"
+        class="flex items-center gap-1.5 text-xs text-amber-600 pl-3 border-l border-slate-200 cursor-pointer">
+        ⚑ Awaiting approver <span id="pendN" class="bg-amber-500 text-white font-mono text-[10px] px-1.5 rounded-full">0</span></div>
+      <div class="flex items-center gap-1.5 text-xs text-slate-500 pl-3 border-l border-slate-200">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>Session · 24m</div>
+      <button onclick="openSettings('pol')" title="Settings" class="text-slate-400 hover:text-brand text-lg leading-none pl-2 border-l border-slate-200">⚙</button>
+    </div>
+  </header>
+  <main class="flex-1 overflow-y-auto scrollbar-thin p-6"><div class="max-w-[1080px]" id="stage"></div></main>
+</div></div>
+
+<div id="bdx" onclick="closeM()" class="fixed inset-0 bg-slate-900/40 z-40 opacity-0 pointer-events-none transition-opacity"></div>
+<div id="mdl" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(470px,92vw)] bg-white rounded-xl shadow-2xl opacity-0 pointer-events-none transition-all scale-95">
+  <div class="px-5 py-4 border-b border-slate-100 flex gap-3"><span id="mIc" class="text-lg">▲</span>
+    <div><h3 id="mT" class="text-base font-bold">Confirm</h3><p id="mP" class="text-xs text-slate-500 mt-0.5"></p></div></div>
+  <div class="px-5 py-4"><ul id="mL" class="text-sm text-slate-600 space-y-1.5"></ul>
+    <div id="mD" class="hidden bg-violet-50 border border-violet-200 rounded-lg p-3 mt-3 text-xs text-violet-800">
+      <b>Dual control required.</b> This needs a second approver. You cannot approve your own request.</div></div>
+  <div class="px-5 py-3.5 border-t border-slate-100 flex gap-2 items-center">
+    <button id="mOk" class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold">Confirm</button>
+    <button onclick="closeM()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-600">Cancel</button>
+    <span id="mK" class="ml-auto text-xs text-slate-400 font-mono"></span></div>
+</div>
+
+<div id="setBd" onclick="closeSettings()" class="fixed inset-0 bg-slate-900/40 z-40 opacity-0 pointer-events-none transition-opacity"></div>
+<div id="setPanel" class="fixed top-0 right-0 h-full w-[min(660px,94vw)] bg-slate-50 z-50 shadow-2xl translate-x-full transition-transform overflow-y-auto scrollbar-thin">
+  <div class="bg-white border-b border-slate-200 px-5 h-14 flex items-center gap-3 sticky top-0">
+    <span class="text-sm font-bold">Settings</span>
+    <button onclick="closeSettings()" class="ml-auto text-slate-400 hover:text-slate-700 text-lg">✕</button></div>
+  <div class="px-5 pt-4"><div class="flex gap-1 border-b border-slate-200 mb-4" id="setTabs"></div>
+    <div id="setBody" class="pb-8"></div></div>
+</div>
+
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm z-[60] opacity-0 translate-y-4 transition-all flex gap-2 items-center">
+  <span id="tm"></span><span id="tk" class="text-xs text-slate-400 font-mono"></span></div>
+
+<script>
+const STEPS=[
+{id:'s1',n:1,label:'Discover Catalog',grp:'Governance',st:'done',meta:'3 sources · 17 tables',
+ subs:[['Run catalog scan','scan_mcc_source'],['List connections','list_connections']]},
+{id:'s2',n:2,label:'Scan Table',st:'done',meta:'CUSTOMER_POSITIONS · 19 cols',
+ subs:[['Fetch columns','scan_fetch_columns'],['Trace lineage','trace_lineage'],['Impact report','generate_impact_report'],['Find root sources','find_data_source']]},
+{id:'s3',n:3,label:'Profile Data',st:'done',meta:'19 columns profiled',tag:'NEW',
+ subs:[['Warehouse query','compute_profile_from_snowflake'],['Informatica profile','create_profile'],['Fetch results','get_profile_results']]},
+{id:'s4',n:4,label:'Generate Taxonomy',st:'done',meta:'3 domains · 4 subdomains',
+ subs:[['Regenerate','generate_governance_taxonomy']]},
+{id:'s5',n:5,label:'Domain Structure',st:'run',meta:'Awaiting steward review',gate:1,
+ subs:[['Create in catalog','create_domain_structure'],['Register system','create_system_and_dataset']]},
+{id:'s6',n:6,label:'Curate Columns',st:'idle',meta:'Not started',gate:1,
+ subs:[['Suggest terms','suggest_terms_for_asset'],['Create term','create_glossary_term'],['Glossary health','detect_glossary_issues']]},
+{id:'s7',n:7,label:'Recommend Rules',st:'idle',meta:'Not started',tag:'NEW',gate:1,
+ subs:[['Write custom rule','create_dq_rules'],['Validate','validate_rule'],['Rule library','list_rule_specifications']]},
+{id:'s8',n:8,label:'Create DQ Rules',st:'idle',meta:'Not started',
+ subs:[['Create rules','create_generic_dq_rules'],['Register occurrences','set_dq_occurrences']]},
+{id:'s9',n:9,label:'Schedule Execution',st:'idle',meta:'Not started',
+ subs:[['Mapping tasks','list_mapping_tasks'],['New task','generate_dq_mapping_task'],['Schedule','create_schedule'],['Taskflow','create_linear_taskflow'],['Job runs','get_job_status']]},
+{id:'s10',n:10,label:'Publish to Catalog',st:'idle',meta:'Not started',
+ subs:[['Catalog scan','run_mcc_scan'],['Upload scores','upload_dq_scores']]},
+{id:'s11',n:11,label:'Monitor Quality',st:'idle',meta:'Not started',
+ subs:[['Scorecard','get_dq_scores'],['Trends','check_score_trends'],['Remediation','recommend_remediation'],['Alerts','alert_on_degradation']]},
+{id:'s12',n:12,label:'Create Collection',grp:'Marketplace',st:'idle',meta:'Not started',
+ subs:[['Category','create_cdmp_category'],['Data asset','create_cdmp_data_asset'],['Collection','create_cdmp_data_collection'],['Link asset','link_asset_to_collection']]},
+{id:'s13',n:13,label:'Publish to Marketplace',st:'idle',meta:'Not started',
+ subs:[['Publish','publish_cdmp_collection']]},
+{id:'s14',n:14,label:'Configure Delivery',st:'idle',meta:'Not started',
+ subs:[['Usage contexts','create_cdmp_usage_contexts'],['Template','create_delivery_template'],['Terms of use','create_terms_of_use'],['Target','create_delivery_target']]},
+{id:'s15',n:15,label:'Consumer Access',st:'idle',meta:'Not started',
+ subs:[['Request','create_consumer_access'],['Approve','approve_consumer_order'],['Verify','verify_consumer_access'],['Withdraw','withdraw_consumer_access']]}];
+
+const DOMAIN=[
+ {g:'Domain',tone:'emerald',rows:[['Customer','new'],['Reference Data','similar term exists in catalog'],['Temporal','new']]},
+ {g:'Subdomain',tone:'indigo',rows:[['Customer Identity','under Customer'],['Customer Position','under Customer'],['Currency','under Reference Data'],['Trade Lifecycle','under Temporal']]},
+ {g:'Business term',tone:'slate',rows:[['Customer Identifier','CUSTOMER_ID'],['Customer Name','CUSTOMER_NAME'],['Position Identifier','POSITION_ID'],['Exposure Amount','EXPOSURE_AMOUNT'],['Currency Code','CURRENCY']]}];
+const CURATE=[
+ {g:'High confidence',tone:'emerald',rows:[['POSITION_ID','Position Identifier','exact naming match'],['CUSTOMER_ID','Customer Identifier','exact naming match'],['CUSTOMER_NAME','Customer Name','exact naming match'],['EXPOSURE_AMOUNT','Exposure Amount','exact naming match'],['TRADE_DATE','Trade Date','exact naming match']]},
+ {g:'Medium confidence',tone:'amber',rows:[['CURRENCY','Currency Code','partial match, 2 candidates']]}];
+const RULES=[{g:'From profiling evidence',tone:'indigo',rows:[
+ ['Completeness on CUSTOMER_NAME','26% null across 19 rows',1],
+ ['Uniqueness on POSITION_ID','18 distinct across 19 rows, 1 duplicate',1],
+ ['Validity on EXPOSURE_AMOUNT','minimum value is negative',1],
+ ['Timeliness on TRADE_DATE','maximum value is in the future, may be intentional',0]]}];
+
+const POLICY={publish_catalog:'single',publish_collection:'single',withdraw_access:'single',
+ import_package:'dual',merge_terms:'single',grant_access:'dual'};
+let PENDING=[],mCb=null,tt,curId='s5';
+const dot=s=>({done:'bg-emerald-500',run:'bg-amber-400 pulse',idle:'bg-slate-300',skip:'bg-amber-400 opacity-50'})[s];
+const S=id=>STEPS.find(x=>x.id===id);
+
+function drawLadder(){
+ let html='',lastGrp='';
+ STEPS.forEach(s=>{
+  if(s.grp&&s.grp!==lastGrp){lastGrp=s.grp;
+   html+=`<div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 pt-3 pb-1.5">${s.grp}</div>
+    <div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100 overflow-hidden mb-1" data-g="${s.grp}">`;}
+  html+=`<button onclick="pick('${s.id}')" class="w-full flex gap-2.5 px-3 py-2 text-left ${s.id===curId?'bg-indigo-50':'hover:bg-slate-50'}">
+   <span class="w-2 h-2 rounded-full ${dot(s.st)} mt-1.5 shrink-0"></span>
+   <span class="min-w-0 flex-1"><span class="block text-[12.5px] font-semibold ${s.st==='skip'?'line-through text-slate-400':''}">${s.n} · ${s.label}
+   ${s.tag?`<span class="ml-1 text-[9px] bg-indigo-100 text-brand-dark px-1 py-0.5 rounded font-bold align-middle">${s.tag}</span>`:''}
+   ${s.gate?`<span class="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold align-middle">REVIEW</span>`:''}</span>
+   <span class="block text-[11px] text-slate-400">${s.meta}</span></span></button>`;
+  if(s.n===11||s.n===15)html+='</div>';});
+ document.getElementById('ladderWrap').innerHTML=html;}
+
+function subRow(s){
+ if(!s.subs)return '';
+ return `<div class="mt-4 bg-white border border-slate-200 rounded-xl shadow-sm p-3">
+  <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Run individually</div>
+  <div class="flex flex-wrap gap-1.5">${s.subs.map(b=>
+   `<button onclick="act(this,'${b[0]} complete','${b[1]}')" class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:border-brand hover:text-brand">
+    ${b[0]}<span class="ml-1.5 font-mono text-[9.5px] text-slate-300">${b[1]}</span></button>`).join('')}</div></div>`;}
+
+function pick(id){curId=id;drawLadder();const s=S(id);
+ document.getElementById('crumb').textContent=`${s.n} · ${s.label}`;
+ document.getElementById('stage').innerHTML=body(s)+subRow(s);
+ if(id==='s5')grp(DOMAIN,'dWrap','dCount','dBtn');
+ if(id==='s6')grp(CURATE,'cWrap','cCount','cBtn');
+ if(id==='s7')grp(RULES,'rWrap','rCount','rBtn');
+ if(id==='s15')rp();
+ document.querySelector('main').scrollTop=0;}
+
+const card=(t,body,extra='')=>`<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+ <div class="px-4 py-2.5 border-b border-slate-100 flex items-center gap-2"><span class="text-sm font-semibold">${t}</span>${extra}</div>${body}</div>`;
+const th=a=>`<tr class="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">${a.map(x=>`<th class="text-left px-4 py-2 font-semibold">${x}</th>`).join('')}</tr>`;
+const gateBanner=(t,d)=>`<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3 mb-4">
+ <span class="text-lg">✋</span><div><div class="text-sm font-semibold text-amber-800">${t}</div><div class="text-xs text-amber-600">${d}</div></div></div>`;
+const gateBar=(w,cnt,btn,label,step,tool,msg)=>`<div class="flex items-center justify-between mb-3">
+ <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider" id="${cnt}">selected</span>
+ <div class="flex gap-2"><button onclick="all('${w}',1)" class="text-xs px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:border-brand hover:text-brand">Select all</button>
+ <button onclick="all('${w}',0)" class="text-xs px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:border-red-300 hover:text-red-500">Deselect all</button>
+ ${w==='cWrap'?`<button onclick="lowOff()" class="text-xs px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:border-amber-400 hover:text-amber-600">Deselect below high</button>`:''}</div></div>
+ <div id="${w}" class="space-y-3"></div>
+ <div class="flex gap-2 mt-4 items-center">
+  <button id="${btn}" onclick="approve('${w}','${w}Rec',${step},'${tool}','${msg}')" class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold hover:bg-brand-dark">${label} (0 items)</button>
+  <button onclick="skip(${step})" class="px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:border-amber-400 hover:text-amber-600">Skip this step</button>
+  <span class="ml-auto text-xs text-slate-400">Deselected items are discarded, not saved as drafts</span></div>
+ <div class="mt-4 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+  <div class="px-4 py-2.5 border-b border-slate-100 flex items-center gap-2"><span class="text-sm font-semibold">Approval record</span>
+   <span class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold uppercase">audit evidence</span></div>
+  <div class="p-4 text-xs font-mono leading-relaxed text-slate-400" id="${w}Rec">No approval recorded for this step yet.</div></div>`;
+
+function body(s){switch(s.id){
+case 's1':return card('Catalog sources',`<table class="w-full text-sm"><thead>${th(['Source','Schema','Tables','Last scanned',''])}</thead>
+ <tbody class="divide-y divide-slate-50">${[['Snowflake_Gov','DQ_TEST','9','Jul 23 09:14'],['Snowflake_Gov','REF_DATA','4','Jul 23 09:14'],['Oracle_DB_XE','HR','4','Jul 18 22:40'],['Databricks_Lake','GOLD','—','never']].map(r=>
+ `<tr><td class="px-4 py-2.5 font-mono text-xs">${r[0]}</td><td class="px-4 py-2.5 font-mono text-xs text-slate-500">${r[1]}</td>
+  <td class="px-4 py-2.5 font-mono text-xs">${r[2]}</td><td class="px-4 py-2.5 text-xs ${r[3]==='never'?'text-amber-600':'text-slate-500'}">${r[3]}</td>
+  <td class="px-4 py-2.5"><button onclick="pick('s2')" class="text-xs px-2.5 py-1 rounded border border-slate-300 hover:border-brand hover:text-brand">Select</button></td></tr>`).join('')}
+ </tbody></table><div class="px-4 py-2.5 border-t border-slate-100 bg-indigo-50 text-xs text-indigo-800">A source that has never been scanned will not appear here. Run a catalog scan first.</div>`,
+ `<span class="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono">3 sources · 17 tables</span>`);
+
+case 's2':return card('Column metadata',`<table class="w-full text-sm"><thead>${th(['Column','Type','Nullable','Description'])}</thead>
+ <tbody class="divide-y divide-slate-50">${[['POSITION_ID','VARCHAR(20)','No'],['CUSTOMER_ID','VARCHAR(20)','No'],['CUSTOMER_NAME','VARCHAR(120)','Yes'],['EXPOSURE_AMOUNT','NUMBER(38,2)','Yes'],['CURRENCY','VARCHAR(10)','No']].map(r=>
+ `<tr><td class="px-4 py-2 font-mono text-xs">${r[0]}</td><td class="px-4 py-2 font-mono text-xs text-slate-500">${r[1]}</td>
+  <td class="px-4 py-2 text-xs">${r[2]}</td><td class="px-4 py-2 text-xs text-slate-300">none</td></tr>`).join('')}
+ </tbody></table>`,`<span class="text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-mono">19 columns</span>`)
+ +`<div class="grid grid-cols-2 gap-4 mt-4">
+ ${card('Lineage',`<div class="p-4"><svg viewBox="0 0 400 170" class="w-full">
+  <defs><marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#cbd5e1" stroke-width="1.2"/></marker></defs>
+  <path d="M88 34 L146 78" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M88 84 L146 86" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M88 134 L146 96" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M258 88 L310 40" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M258 94 L310 90" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <path d="M258 100 L310 140" stroke="#cbd5e1" stroke-width="1.2" marker-end="url(#ar)"/>
+  <g font-size="8.5" font-family="ui-monospace,monospace">
+   <rect x="4" y="20" width="84" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="12" y="37" fill="#64748b">ORACLE_CRM</text>
+   <rect x="4" y="72" width="84" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="10" y="89" fill="#64748b">SAP_POSITIONS</text>
+   <rect x="4" y="124" width="84" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="10" y="141" fill="#64748b">REF_CURRENCY</text>
+   <rect x="146" y="74" width="112" height="32" rx="6" fill="#6366f1"/><text x="155" y="94" fill="#fff">CUSTOMER_POSITIONS</text>
+   <rect x="310" y="26" width="86" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="322" y="43" fill="#64748b">CUST_360</text>
+   <rect x="310" y="78" width="86" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="320" y="95" fill="#64748b">RISK_MART</text>
+   <rect x="310" y="128" width="86" height="26" rx="6" fill="#fff" stroke="#e2e8f0"/><text x="318" y="145" fill="#64748b">CMS_RPT_04</text>
+  </g></svg></div>`,`<span class="text-xs bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-mono">4 up · 6 down</span>`)}
+ ${card('Impact if this changes',`<table class="w-full text-sm"><thead>${th(['Downstream','Hops','Severity'])}</thead><tbody class="divide-y divide-slate-50">
+  ${[['CMS_RPT_04','1','high','red'],['RISK_MART','1','medium','amber'],['CUST_360','1','medium','amber'],['EXEC_DASH_Q3','2','low','slate']].map(r=>
+  `<tr><td class="px-4 py-2 font-mono text-xs">${r[0]}</td><td class="px-4 py-2 font-mono text-xs">${r[1]}</td>
+   <td class="px-4 py-2"><span class="text-[10px] bg-${r[3]}-50 text-${r[3]}-700 px-1.5 py-0.5 rounded font-semibold">${r[2]}</span></td></tr>`).join('')}
+  </tbody></table>`,`<span class="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-semibold">1 high</span>`)}</div>`;
+
+case 's3':return card('Profile results',`<table class="w-full text-sm"><thead>${th(['Column','Null %','Distinct','Min / Max','Reads as'])}</thead>
+ <tbody class="divide-y divide-slate-50">
+ ${[['POSITION_ID',0,'18 <span class="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded">1 dup</span>','—','identifier'],
+    ['CUSTOMER_NAME',26,'14','—','free text'],
+    ['EXPOSURE_AMOUNT',5,'19','-4,200 / 88,140','measure'],
+    ['CURRENCY',0,'5','—','code list'],
+    ['TRADE_DATE',0,'17','2024-01-04 / <b class="text-amber-600">2027-11-02</b>','date']].map(r=>
+ `<tr><td class="px-4 py-2 font-mono text-xs">${r[0]}</td>
+  <td class="px-4 py-2"><span class="inline-block w-12 h-1 bg-slate-200 rounded align-middle mr-1.5">${r[1]?`<i class="block h-1 ${r[1]>20?'bg-red-500':'bg-brand'} rounded" style="width:${r[1]}%"></i>`:''}</span>
+   <span class="text-xs ${r[1]>20?'font-bold text-red-600':''}">${r[1]}%</span></td>
+  <td class="px-4 py-2 font-mono text-xs">${r[2]}</td><td class="px-4 py-2 font-mono text-xs">${r[3]}</td>
+  <td class="px-4 py-2 text-xs text-indigo-700">${r[4]}</td></tr>`).join('')}
+ </tbody></table><div class="px-4 py-2.5 border-t border-slate-100 bg-indigo-50 text-xs text-indigo-800">
+ <b>Why this runs before taxonomy.</b> "Reads as" is derived from distinct counts, null rates and ranges. Without it the next step classifies on column names alone, which produces descriptions rather than a taxonomy.</div>`,
+ `<span class="text-[10px] bg-indigo-100 text-brand-dark px-1.5 py-0.5 rounded font-bold">NEW STEP</span>
+  <span class="ml-auto text-xs text-slate-400 font-mono">1 query · 0.9s</span>`);
+
+case 's4':return card('Proposed taxonomy',`<div class="p-4 text-sm divide-y divide-slate-50">
+ <div class="py-2 font-semibold">Customer <span class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold uppercase ml-1">domain</span></div>
+ <div class="py-1.5 pl-5 text-slate-600">Customer Identity</div>
+ <div class="py-1.5 pl-10 text-xs text-slate-400">Customer Identifier · Customer Name · Account Number</div>
+ <div class="py-1.5 pl-5 text-slate-600">Customer Position</div>
+ <div class="py-1.5 pl-10 text-xs text-slate-400">Position Identifier · Exposure Amount</div>
+ <div class="py-2 font-semibold">Reference Data <span class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold uppercase ml-1">domain</span></div>
+ <div class="py-1.5 pl-5 text-slate-600">Currency <span class="text-[10px] text-indigo-600 ml-1">← classified from 5 distinct codes</span></div>
+ <div class="py-2 font-semibold">Temporal <span class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold uppercase ml-1">domain</span></div>
+ <div class="py-1.5 pl-5 text-slate-600">Trade Lifecycle</div></div>
+ <div class="px-4 py-2.5 border-t border-slate-100 flex items-center gap-2">
+  <span class="text-xs text-slate-500">Nothing written to the catalog yet. The next step is where you choose.</span>
+  <button onclick="pick('s5')" class="ml-auto text-xs px-3 py-1.5 rounded-lg bg-brand text-white font-semibold hover:bg-brand-dark">Review and select →</button></div>`,
+ `<span class="text-[10px] bg-indigo-100 text-brand-dark px-1.5 py-0.5 rounded font-bold">PROFILE INFORMED</span>`);
+
+case 's5':return gateBanner('Review before creating in CDGC','Deselect anything you do not want. Click a name to rename it.')
+ +gateBar('dWrap','dCount','dBtn','✓ Approve &amp; Create',4,'approve_domain_structure','items created in CDGC');
+
+case 's6':return gateBanner('Review before linking in CDGC','Every match was proposed by the agent. Deselect anything wrong, click a term to rename it.')
+ +gateBar('cWrap','cCount','cBtn','✓ Approve &amp; Link',5,'curate_batch','columns linked to business terms');
+
+case 's7':return gateBanner('Review recommended rules','Each recommendation cites the profiling evidence behind it.')
+ +gateBar('rWrap','rCount','rBtn','✓ Create rules',6,'create_generic_dq_rules','rule specifications created');
+
+case 's8':return card('Rules and occurrences',`<table class="w-full text-sm"><thead>${th(['Rule','Dimension','Column','Occurrence'])}</thead>
+ <tbody class="divide-y divide-slate-50">${[['CUSTOMER_NAME_NOT_NULL','Completeness','CUSTOMER_NAME','DQO-6'],['POSITION_ID_UNIQUE','Uniqueness','POSITION_ID','DQO-7'],['EXPOSURE_AMT_GT_ZERO','Validity','EXPOSURE_AMOUNT','DQO-8']].map(r=>
+ `<tr><td class="px-4 py-2.5 font-mono text-xs">${r[0]}</td><td class="px-4 py-2.5 text-xs">${r[1]}</td>
+  <td class="px-4 py-2.5 font-mono text-xs text-slate-500">${r[2]}</td>
+  <td class="px-4 py-2.5"><span class="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-semibold">${r[3]}</span></td></tr>`).join('')}
+ </tbody></table>`,`<span class="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">3 created</span>`);
+
+case 's9':return `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-sm text-amber-800">
+ <b>Execution template present.</b> M_DQ_Generic found in this org. Tasks below bind to it.</div>`
+ +card('Mapping tasks',`<table class="w-full text-sm"><thead>${th(['Task','Bound rule','Schedule','Last run',''])}</thead>
+ <tbody class="divide-y divide-slate-50">${[['CUSTOMER_NAME_NOT_NULL_task','CUSTOMER_NAME_NOT_NULL','Daily 08:00Z','success','emerald'],
+  ['POSITION_ID_UNIQUE_task','POSITION_ID_UNIQUE','Weekly Mon','success','emerald'],
+  ['EXPOSURE_AMT_VALID_task','EXPOSURE_AMT_GT_ZERO','none','running','amber'],
+  ['CURRENCY_FORMAT_task','CURRENCY_ISO_4217','none','never','slate']].map(r=>
+ `<tr><td class="px-4 py-2.5 font-mono text-xs">${r[0]}</td><td class="px-4 py-2.5 font-mono text-xs text-slate-500">${r[1]}</td>
+  <td class="px-4 py-2.5 text-xs ${r[2]==='none'?'text-slate-300':'text-slate-600'}">${r[2]}</td>
+  <td class="px-4 py-2.5"><span class="text-[10px] bg-${r[4]}-50 text-${r[4]}-700 px-1.5 py-0.5 rounded font-semibold">${r[3]}</span></td>
+  <td class="px-4 py-2.5"><button onclick="act(this,'Task triggered','run_task')" class="text-xs px-2.5 py-1 rounded border border-slate-300 hover:border-brand hover:text-brand">Run</button></td></tr>`).join('')}
+ </tbody></table>`)
+ +`<div class="grid grid-cols-2 gap-4 mt-4">
+ ${card('New schedule',`<div class="p-4 space-y-3">
+  <div><div class="text-xs text-slate-500 mb-1.5">Frequency</div><div class="flex gap-1.5">
+   <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-slate-300">Hourly</button>
+   <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-brand bg-brand text-white">Daily</button>
+   <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-slate-300">Weekly</button>
+   <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-slate-300">Monthly</button></div></div>
+  <div><div class="text-xs text-slate-500 mb-1">Start time <span class="font-mono text-slate-400">.000Z required</span></div>
+   <input class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono" value="2026-07-24T08:00:00.000Z"></div>
+  <button onclick="act(this,'Schedule created','create_schedule')" class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold">Create schedule</button></div>`)}
+ ${card('Job runs',`<table class="w-full text-sm"><tbody class="divide-y divide-slate-50">
+  ${[['1104','EXPOSURE_AMT_VALID_task','running','amber'],['1103','POSITION_ID_UNIQUE_task','success','emerald'],['1101','CURRENCY_FORMAT_task','failed','red']].map(r=>
+  `<tr><td class="px-4 py-2 font-mono text-xs">${r[0]}</td><td class="px-4 py-2 font-mono text-xs text-slate-500">${r[1]}</td>
+   <td class="px-4 py-2"><span class="text-[10px] bg-${r[3]}-50 text-${r[3]}-700 px-1.5 py-0.5 rounded font-semibold">${r[2]}</span></td></tr>`).join('')}
+  </tbody></table><div class="px-4 py-2 border-t border-slate-100 bg-red-50 text-xs text-red-700">Run 1101 failed. No fields were available for the target.</div>`,
+  `<span class="text-xs bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">polls every 5s</span>`)}</div>`;
+
+case 's10':return card('Publish to governance catalog',`<div class="p-4">
+ <div class="text-xs text-slate-500 mb-3">Triggers the catalog scan so rules execute against live data and scores publish.</div>
+ <button onclick="gate('publish_catalog',{t:'Publish to the governance catalog',s:'Runs rules against live data and writes scores.',ok:'Publish',tool:'run_mcc_scan',msg:'Catalog scan submitted',items:['Executes 3 DQ rules against CUSTOMER_POSITIONS','Writes quality scores to the governance catalog','Visible to every consumer of this asset','Cannot be retracted, only superseded by a later run']})"
+  class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold hover:bg-brand-dark">Run catalog scan</button></div>`)
+ +`<div class="grid grid-cols-3 gap-3 mt-4">${[['Terms created','11'],['Columns linked','19'],['Rules active','3']].map(k=>
+ `<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"><div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${k[0]}</div>
+  <div class="text-3xl font-bold mt-1">${k[1]}</div></div>`).join('')}</div>`;
+
+case 's11':return `<div class="grid grid-cols-4 gap-3 mb-4">${[['Composite','78','amber','▾ 9 pts, 7d'],['Completeness','61','red','▾ 22 pts'],['Uniqueness','94','emerald','no change'],['Validity','89','emerald','▴ 3 pts']].map(k=>
+ `<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"><div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${k[0]}</div>
+  <div class="text-3xl font-bold text-${k[2]}-600 mt-1">${k[1]}</div><div class="text-xs text-slate-500 mt-1">${k[3]}</div></div>`).join('')}</div>
+ <div class="grid grid-cols-2 gap-4">
+ ${card('Score trend',`<div class="p-4"><svg viewBox="0 0 400 140" class="w-full">
+  <line x1="28" y1="10" x2="392" y2="10" stroke="#f1f5f9"/><line x1="28" y1="45" x2="392" y2="45" stroke="#f1f5f9"/>
+  <line x1="28" y1="80" x2="392" y2="80" stroke="#f1f5f9"/><line x1="28" y1="112" x2="392" y2="112" stroke="#f1f5f9"/>
+  <text x="6" y="14" font-size="9" fill="#94a3b8">100</text><text x="8" y="49" font-size="9" fill="#94a3b8">85</text>
+  <text x="8" y="84" font-size="9" fill="#94a3b8">70</text><text x="8" y="116" font-size="9" fill="#94a3b8">55</text>
+  <line x1="28" y1="52" x2="392" y2="52" stroke="#f59e0b" stroke-dasharray="3 3"/>
+  <text x="330" y="48" font-size="8.5" fill="#f59e0b">threshold 82</text>
+  <polyline points="38,38 92,34 146,40 200,36 254,44 308,68 362,74" fill="none" stroke="#6366f1" stroke-width="2"/>
+  <circle cx="308" cy="68" r="3" fill="#f59e0b"/><circle cx="362" cy="74" r="3.5" fill="#f59e0b"/></svg>
+  <div class="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-3 text-xs text-amber-700">Crossed the 82 threshold on <b>Jul 16</b> and has not recovered.</div></div>`,
+  `<span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-semibold">degradation</span>`)}
+ <div class="space-y-4">
+ ${card('Remediation',`<div class="divide-y divide-slate-50">
+  <div class="p-3.5"><div class="text-sm font-semibold mb-1">Completeness drop traced to CUSTOMER_NAME</div>
+   <div class="text-xs text-slate-500">Null rate rose from 4% to 26% between Jul 14 and Jul 16.</div>
+   <button onclick="pick('s2')" class="mt-2 text-xs px-2.5 py-1 rounded border border-slate-300 hover:border-brand hover:text-brand">Check lineage</button></div>
+  <div class="p-3.5"><div class="text-sm font-semibold mb-1">No rule covering SETTLEMENT_DATE</div>
+   <div class="text-xs text-slate-500">Column linked to a term but has no rule occurrence.</div>
+   <button onclick="pick('s7')" class="mt-2 text-xs px-2.5 py-1 rounded border border-slate-300 hover:border-brand hover:text-brand">Add a rule</button></div></div>`)}
+ ${card('Alert threshold',`<div class="p-4"><div class="flex items-center justify-between text-sm">
+  <div><span class="font-mono text-xs">CUSTOMER_POSITIONS</span> below <span class="font-mono text-xs">82</span></div>
+  <span class="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-semibold">firing</span></div>
+  <div class="bg-indigo-50 border border-indigo-100 rounded-lg p-2.5 mt-3 text-xs text-indigo-800">
+   Thresholds are stored and evaluated by this platform. Informatica does not expose programmatic alert registration.</div></div>`)}
+ </div></div>`;
+
+case 's12':return card('Collection',`<div class="p-4 space-y-3 max-w-md">
+ <div><div class="text-xs text-slate-500 mb-1">Category</div><input class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm" value="Customer Data"></div>
+ <div><div class="text-xs text-slate-500 mb-1">Collection name</div><input class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm" value="Customer Positions Q3"></div>
+ <div><div class="text-xs text-slate-500 mb-1">Data asset</div><select class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm"><option>CUSTOMER_POSITIONS · score 78</option></select></div>
+ <button onclick="act(this,'Collection created and asset linked','create_cdmp_data_collection')" class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold">Create collection</button></div>`);
+
+case 's13':return card('Publish to marketplace',`<div class="p-4">
+ <div class="text-xs text-slate-500 mb-3">Makes the collection discoverable, carrying its quality score from the catalog.</div>
+ <button onclick="gate('publish_collection',{t:'Publish collection to the marketplace',s:'Customer Positions Q3 becomes discoverable by consumers.',ok:'Publish',tool:'publish_cdmp_collection',msg:'Collection published',items:['Visible to every marketplace consumer in this org','Carries the current composite score of 78','Contains columns linked to identifying business terms','Unpublishing does not revoke access already granted']})"
+  class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold hover:bg-brand-dark">Publish collection</button></div>`);
+
+case 's14':return card('Delivery and terms',`<div class="p-4 space-y-3 max-w-lg">
+ <div><div class="text-xs text-slate-500 mb-1.5">Usage contexts</div>
+  <div class="border border-slate-200 rounded-lg divide-y divide-slate-100">
+   <label class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer"><input type="checkbox" checked class="accent-indigo-600 w-3.5 h-3.5">Regulatory reporting</label>
+   <label class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer"><input type="checkbox" checked class="accent-indigo-600 w-3.5 h-3.5">Internal analytics</label>
+   <label class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer text-slate-400"><input type="checkbox" class="accent-indigo-600 w-3.5 h-3.5">External sharing</label></div></div>
+ <div><div class="text-xs text-slate-500 mb-1.5">Delivery target</div><div class="flex gap-1.5">
+  <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-brand bg-brand text-white">Snowflake share</button>
+  <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-slate-300">File</button>
+  <button onclick="seg(this)" class="sg text-xs px-3 py-1.5 rounded-lg border border-slate-300">Ticket</button></div></div>
+ <button onclick="act(this,'Delivery configuration saved','create_delivery_template')" class="px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold">Save configuration</button>
+ <div class="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-700">Where a signed acknowledgement is required, this step can be removed from the automated flow.</div></div>`);
+
+case 's15':return card('Consumer access lifecycle',`<table class="w-full text-sm"><thead>${th(['Consumer','Requested','State','Action'])}</thead>
+ <tbody class="divide-y divide-slate-50">
+ <tr><td class="px-4 py-2.5 font-mono text-xs">analytics_team</td><td class="px-4 py-2.5 text-xs text-slate-500">Jul 22</td>
+  <td class="px-4 py-2.5"><span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-semibold">pending</span></td>
+  <td class="px-4 py-2.5"><button onclick="gate('grant_access',{t:'Approve access for analytics_team',s:'This collection contains identifying fields.',ok:'Approve',tool:'approve_consumer_order',msg:'Order approved',items:['Grants standing access to Customer Positions Q3','Contains columns linked to Customer Identifier and Customer Name','Delivery target is a Snowflake share']})"
+   class="text-xs px-2.5 py-1 rounded-lg bg-brand text-white font-semibold hover:bg-brand-dark">Approve</button></td></tr>
+ <tr><td class="px-4 py-2.5 font-mono text-xs">contractor_temp</td><td class="px-4 py-2.5 text-xs text-slate-500">Jun 30</td>
+  <td class="px-4 py-2.5"><span class="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-semibold">fulfilled</span></td>
+  <td class="px-4 py-2.5"><button onclick="gate('withdraw_access',{t:'Withdraw access for contractor_temp',s:'Access is revoked immediately.',ok:'Withdraw access',danger:1,tool:'withdraw_consumer_access',msg:'Access withdrawn',items:['Consumer loses access immediately','Running queries using this grant will fail','Restoring requires a new request and approval']})"
+   class="text-xs px-2.5 py-1 rounded border border-slate-300 hover:border-red-300 hover:text-red-600">Withdraw</button></td></tr>
+ </tbody></table>`,`<span class="text-xs bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded font-semibold">dual control</span>`)
+ +`<div class="mt-4">${card('Awaiting second approver',`<table class="w-full text-sm"><tbody id="pendBody" class="divide-y divide-slate-50"></tbody></table>`,
+  `<span id="pendPill" class="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-mono">0</span>
+   <span class="ml-auto text-xs text-slate-400">A requester cannot approve their own request</span>`)}</div>`;
+default:return '';}}
+
+function grp(data,w,cnt,btn){
+ document.getElementById(w).innerHTML=data.map(G=>
+ `<div class="grp rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+  <div onclick="gTog(this,'${w}','${cnt}','${btn}')" class="flex items-center gap-2 px-4 py-2.5 bg-${G.tone}-50 border-b border-slate-200 cursor-pointer">
+   <input type="checkbox" checked class="gbx accent-indigo-600 w-3.5 h-3.5 pointer-events-none">
+   <span class="text-xs font-bold uppercase tracking-wider text-${G.tone}-700">${G.g}</span>
+   <span class="gc text-xs text-slate-400 font-medium"></span></div>
+  <div class="divide-y divide-slate-100">${G.rows.map(r=>
+   `<div class="rw flex items-center gap-3 px-4 py-2.5">
+    <input type="checkbox" ${r[2]===0?'':'checked'} onclick="sync('${w}','${cnt}','${btn}')" class="accent-indigo-600 w-3.5 h-3.5 cursor-pointer">
+    ${typeof r[2]==='string'?`<span class="text-xs font-mono text-slate-400 w-36 shrink-0">${r[0]}</span>
+      <span contenteditable="true" oninput="this.dataset.r=1" class="text-sm px-1.5 py-0.5 -mx-1.5 rounded hover:bg-slate-100 cursor-text">${r[1]}</span>
+      <span class="ml-auto text-xs text-slate-400">${r[2]}</span>`
+     :`<span class="min-w-0"><span contenteditable="true" oninput="this.dataset.r=1" class="text-sm px-1.5 py-0.5 -mx-1.5 rounded hover:bg-slate-100 cursor-text">${r[0]}</span>
+      <span class="block text-xs text-slate-400 mt-0.5">${r[1]}</span></span>`}</div>`).join('')}</div></div>`).join('');
+ sync(w,cnt,btn);}
+function sync(w,cnt,btn){const W=document.getElementById(w);if(!W)return;
+ W.querySelectorAll('.grp').forEach(g=>{const rows=g.querySelectorAll('.rw');
+  const on=[...rows].filter(r=>r.querySelector('input').checked);
+  g.querySelector('.gc').textContent=`${on.length} / ${rows.length}`;
+  g.querySelector('.gbx').checked=on.length===rows.length;
+  rows.forEach(r=>r.className='rw flex items-center gap-3 px-4 py-2.5 '+(r.querySelector('input').checked?'':'bg-slate-50 opacity-50'));});
+ const all=W.querySelectorAll('.rw input').length,sel=[...W.querySelectorAll('.rw input')].filter(i=>i.checked).length;
+ document.getElementById(cnt).textContent=`${sel} / ${all} selected`;
+ const b=document.getElementById(btn);
+ b.innerHTML=b.innerHTML.replace(/\(\d+ items\)/,`(${sel} items)`);
+ b.disabled=sel===0;b.className='px-4 py-2 rounded-lg text-white text-sm font-semibold '+(sel?'bg-brand hover:bg-brand-dark':'bg-slate-300');}
+function gTog(h,w,c,b){const on=!h.querySelector('.gbx').checked;
+ h.parentNode.querySelectorAll('.rw input').forEach(i=>i.checked=on);sync(w,c,b);}
+function all(w,on){document.querySelectorAll('#'+w+' .rw input').forEach(i=>i.checked=!!on);
+ const m={dWrap:['dCount','dBtn'],cWrap:['cCount','cBtn'],rWrap:['rCount','rBtn']}[w];sync(w,m[0],m[1]);}
+function lowOff(){document.querySelectorAll('#cWrap .grp').forEach((g,i)=>{if(i>0)g.querySelectorAll('.rw input').forEach(x=>x.checked=false);});
+ sync('cWrap','cCount','cBtn');}
+function approve(w,recId,idx,tool,msg){const b=event.target;
+ if(b.disabled||b.classList.contains('busy'))return;b.classList.add('busy');
+ setTimeout(()=>{b.classList.remove('busy');const W=document.getElementById(w);
+  const rows=W.querySelectorAll('.rw'),sel=[...rows].filter(r=>r.querySelector('input').checked);
+  const rn=[...W.querySelectorAll('[contenteditable]')].filter(e=>e.dataset.r).length;
+  const ts=new Date().toISOString().replace('T',' ').slice(0,16);
+  const rec=document.getElementById(recId);rec.className='p-4 text-xs font-mono leading-relaxed text-slate-600';
+  rec.innerHTML=`approved_by&nbsp;&nbsp;&nbsp;data_steward@client.example<br>approved_at&nbsp;&nbsp;&nbsp;${ts} UTC<br>`+
+   `items&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${sel.length} of ${rows.length} accepted${rn?`, ${rn} renamed`:''}<br>`+
+   `discarded&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${rows.length-sel.length}<br>written_to&nbsp;&nbsp;&nbsp;&nbsp;CDGC`;
+  STEPS[idx].st='done';STEPS[idx].meta=`${sel.length} items approved`;
+  if(STEPS[idx+1]&&STEPS[idx+1].st==='idle'){STEPS[idx+1].st='run';STEPS[idx+1].meta='Awaiting steward review';}
+  drawLadder();toast(`${sel.length} ${msg}`,tool);},680);}
+function skip(idx){const s=STEPS[idx];s.st=s.st==='skip'?'idle':'skip';
+ s.meta=s.st==='skip'?'Skipped by steward':'Not started';drawLadder();
+ toast(s.st==='skip'?'Step skipped':'Step restored');}
+function resetAll(){STEPS.forEach((s,i)=>{s.st=i===0?'done':'idle';if(i)s.meta='Not started';});
+ drawLadder();pick('s1');toast('Pipeline reset','reset_pipeline');}
+function runAll(b){if(b.classList.contains('busy'))return;b.classList.add('busy','lt');
+ STEPS.forEach(s=>{s.st='idle';s.meta='Queued';});drawLadder();
+ let i=0;const tick=()=>{if(i>0){STEPS[i-1].st='done';STEPS[i-1].meta='Complete';}
+  if(i>=STEPS.length){drawLadder();b.classList.remove('busy','lt');toast('All 15 steps complete','onboard_and_govern');return;}
+  STEPS[i].st='run';STEPS[i].meta='Running';drawLadder();pick(STEPS[i].id);i++;setTimeout(tick,340);};tick();}
+
+function toast(m,k){const e=document.getElementById('toast');
+ document.getElementById('tm').textContent=m;document.getElementById('tk').textContent=k?'· '+k:'';
+ e.classList.remove('opacity-0','translate-y-4');clearTimeout(tt);
+ tt=setTimeout(()=>e.classList.add('opacity-0','translate-y-4'),2100);}
+function act(b,m,k){if(b.classList.contains('busy'))return;
+ b.classList.add('busy');if(!b.className.includes('bg-brand'))b.classList.add('lt');
+ setTimeout(()=>{b.classList.remove('busy','lt');toast(m,k);},560);}
+function gate(key,o){const mode=POLICY[key]||'single';
+ document.getElementById('mIc').textContent=o.danger?'✕':(mode==='dual'?'⚑':'▲');
+ document.getElementById('mT').textContent=o.t;document.getElementById('mP').textContent=o.s||'';
+ document.getElementById('mL').innerHTML=(o.items||[]).map(i=>`<li class="flex gap-2"><span class="text-slate-300">→</span><span>${i}</span></li>`).join('');
+ document.getElementById('mK').textContent=o.tool||'';
+ document.getElementById('mD').classList.toggle('hidden',mode!=='dual');
+ const ok=document.getElementById('mOk');
+ ok.className='px-4 py-2 rounded-lg text-white text-sm font-semibold '+(o.danger&&mode!=='dual'?'bg-red-600 hover:bg-red-700':'bg-brand hover:bg-brand-dark');
+ ok.textContent=mode==='dual'?'Submit for second approval':(o.ok||'Confirm');
+ mCb=()=>{if(mode==='dual'){PENDING.push({t:o.t,by:'data_steward@client.example',
+   at:new Date().toISOString().replace('T',' ').slice(0,16)});rp();toast('Queued for second approver',o.tool);}
+  else toast(o.msg||'Done',o.tool);};
+ document.getElementById('bdx').classList.remove('opacity-0','pointer-events-none');
+ document.getElementById('mdl').classList.remove('opacity-0','pointer-events-none','scale-95');}
+function closeM(){document.getElementById('bdx').classList.add('opacity-0','pointer-events-none');
+ document.getElementById('mdl').classList.add('opacity-0','pointer-events-none','scale-95');mCb=null;}
+function rp(){const b=document.getElementById('pendBox');b.style.display=PENDING.length?'flex':'none';
+ document.getElementById('pendN').textContent=PENDING.length;
+ const pp=document.getElementById('pendPill');if(pp)pp.textContent=PENDING.length;
+ const t=document.getElementById('pendBody');if(!t)return;
+ t.innerHTML=PENDING.length?PENDING.map((p,i)=>`<tr><td class="px-4 py-2.5 text-sm">${p.t}</td>
+  <td class="px-4 py-2.5 font-mono text-xs text-slate-500">${p.by}</td><td class="px-4 py-2.5 font-mono text-xs text-slate-500">${p.at}</td>
+  <td class="px-4 py-2.5"><span class="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-semibold">awaiting second approver</span></td>
+  <td class="px-4 py-2.5"><button disabled title="Requester cannot approve" class="text-xs px-2.5 py-1 rounded border border-slate-200 text-slate-300">Approve</button>
+  <button onclick="PENDING.splice(${i},1);rp();toast('Request withdrawn')" class="text-xs px-2.5 py-1 rounded border border-slate-300 ml-1">Withdraw</button></td></tr>`).join('')
+ :`<tr><td colspan="5" class="px-4 py-5 text-sm text-slate-400">No requests awaiting a second approver.</td></tr>`;}
+function seg(b){b.parentNode.querySelectorAll('.sg').forEach(x=>x.className='sg text-xs px-3 py-1.5 rounded-lg border border-slate-300');
+ b.className='sg text-xs px-3 py-1.5 rounded-lg border border-brand bg-brand text-white';}
+function pol(b){b.parentNode.querySelectorAll('.pb').forEach(x=>x.className='pb text-[11px] px-2 py-1 rounded border border-slate-300');
+ b.className='pb text-[11px] px-2 py-1 rounded border border-brand bg-brand text-white';toast('Policy updated','approval_policy');}
+
+function openSettings(tab){tab=tab||'pol';
+ document.getElementById('setTabs').innerHTML=[['pol','Approval policy'],['exp','Export / Import'],['cov','Tool coverage']].map(t=>
+  `<button onclick="openSettings('${t[0]}')" class="px-3.5 py-2 text-sm border-b-2 -mb-px ${t[0]===tab?'border-brand text-brand font-semibold':'border-transparent text-slate-500 hover:text-slate-800'}">${t[1]}</button>`).join('');
+ const B=document.getElementById('setBody');
+ if(tab==='pol')B.innerHTML=`<div class="bg-indigo-50 border border-indigo-100 rounded-xl p-3 mb-4 text-sm text-indigo-800">
+   Review gates are the default. Setting one to automatic removes the steward from that decision.</div>
+  ${card('Review gates',`<div class="divide-y divide-slate-50">${[
+   ['Domain structure','Steward selects domains, subdomains and terms'],
+   ['Column curation','Steward reviews every AI term match'],
+   ['Rule recommendations','Steward selects which rules are created']].map(r=>
+  `<div class="flex items-center gap-3 px-4 py-2.5"><div class="flex-1"><div class="text-sm">${r[0]}</div>
+   <div class="text-xs text-slate-400">${r[1]}</div></div><div class="flex gap-1">
+   <button onclick="pol(this)" class="pb text-[11px] px-2 py-1 rounded border border-slate-300">Auto</button>
+   <button onclick="pol(this)" class="pb text-[11px] px-2 py-1 rounded border border-brand bg-brand text-white">Steward</button></div></div>`).join('')}</div>`)}
+  <div class="mt-4">${card('Write actions',`<div class="divide-y divide-slate-50">${[
+   ['Publish to governance catalog','Runs rules on live data',1],['Publish collection','Makes a product discoverable',1],
+   ['Grant consumer access','Asset contains identifying fields',2],['Withdraw access','Revokes immediately',1],
+   ['Import asset bundle','Overwrites on identifier match',2],['Merge glossary terms','Cannot be undone',1]].map(r=>
+  `<div class="flex items-center gap-3 px-4 py-2.5"><div class="flex-1"><div class="text-sm">${r[0]}</div>
+   <div class="text-xs text-slate-400">${r[1]}</div></div><div class="flex gap-1">
+   ${['Auto','Steward','Dual'].map((m,i)=>`<button onclick="pol(this)" class="pb text-[11px] px-2 py-1 rounded border ${i===r[2]?'border-brand bg-brand text-white':'border-slate-300'}">${m}</button>`).join('')}
+   </div></div>`).join('')}</div>`)}</div>
+  <div class="mt-4">${card('Awaiting second approver',`<table class="w-full text-sm"><tbody id="pendBody" class="divide-y divide-slate-50"></tbody></table>`,
+   `<span id="pendPill" class="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-mono">0</span>`)}</div>`;
+ if(tab==='exp')B.innerHTML=`${card('Export assets',`<div class="p-4">
+   <div class="text-xs text-slate-500 mb-3">A versioned bundle for backup, audit evidence, or promotion to another org.</div>
+   <label class="flex items-center gap-2.5 py-1 text-sm cursor-pointer"><input type="checkbox" checked class="accent-indigo-600 w-3.5 h-3.5">Rule specifications <span class="font-mono text-xs text-slate-400">41</span></label>
+   <label class="flex items-center gap-2.5 py-1 text-sm cursor-pointer"><input type="checkbox" checked class="accent-indigo-600 w-3.5 h-3.5">Mapping tasks <span class="font-mono text-xs text-slate-400">4</span></label>
+   <button onclick="act(this,'Export job started','export_assets')" class="mt-3 px-4 py-2 rounded-lg bg-brand text-white text-sm font-semibold">Start export</button></div>`)}
+  <div class="mt-4">${card('Import package',`<div class="p-4">
+   <div onclick="gate('import_package',{t:'Import asset bundle into this org',s:'Bundle contents are written directly to the org.',ok:'Import',tool:'import_package',msg:'Package imported',items:['Writes rules, tasks and schedules from an external bundle','Existing assets with matching identifiers are overwritten','No automatic rollback once the commit stage begins']})"
+    class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500 cursor-pointer hover:border-brand hover:text-brand">
+    Drop a bundle here<div class="font-mono text-xs text-slate-400 mt-1">.zip</div></div></div>`)}</div>`;
+ if(tab==='cov')B.innerHTML=card('Tool coverage',`<div class="p-4 text-sm text-slate-500">All 65 tools mapped to the step that surfaces them. This is the traceability record behind the capability comparison document.</div>
+  <table class="w-full text-sm"><thead>${th(['Step','Tools'])}</thead><tbody class="divide-y divide-slate-50">
+  ${STEPS.map(s=>`<tr><td class="px-4 py-2 text-xs font-semibold w-44">${s.n} · ${s.label}</td>
+   <td class="px-4 py-2 font-mono text-[11px] text-slate-500">${(s.subs||[]).map(x=>x[1]).join(' · ')}</td></tr>`).join('')}
+  <tr><td class="px-4 py-2 text-xs font-semibold text-slate-400">Settings</td>
+   <td class="px-4 py-2 font-mono text-[11px] text-slate-400">export_assets · import_package · approval_policy</td></tr>
+  </tbody></table>`);
+ document.getElementById('setBd').classList.remove('opacity-0','pointer-events-none');
+ document.getElementById('setPanel').classList.remove('translate-x-full');rp();}
+function closeSettings(){document.getElementById('setBd').classList.add('opacity-0','pointer-events-none');
+ document.getElementById('setPanel').classList.add('translate-x-full');}
+
+document.getElementById('mOk').onclick=()=>{if(mCb){const f=mCb;closeM();f();}};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeM();closeSettings();}});
+drawLadder();pick('s5');
+</script>
+</body>
+</html>

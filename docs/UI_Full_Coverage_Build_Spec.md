@@ -79,7 +79,9 @@ This table is the complete substep list. Every phase section below elaborates on
 
 **Step 1 renders collapsed.** `DiscoverResult` initialises `collapsed` as `React.useState({})`, and since `isOpen = !collapsed[key]`, an empty map means every source, database and schema is open on load. That was fine against a small development catalog; on the live container it renders 12 sources and 6,040 table chips at once. Invert the default: sources collapsed, expanding a source reveals its schemas collapsed, expanding a schema reveals its tables. The two summary cards stay.
 
-Two additions to the same step, both taken from the mock, which is right about them. Put a **last scanned** value on each source header beside the existing "N tables · M schemas" — scan recency is governance information and the tree currently drops it. And give each schema row a **Select** action that sets step 2's schema dropdown and navigates there; the tree browses but cannot act, so today a steward reads it and then re-picks the same schema from a dropdown one step later.
+Two additions to the same step, both taken from the mock, which is right about them. Put a **last scanned** value on each source header beside the existing "N tables · M schemas" — scan recency is governance information and the tree currently drops it.
+
+Distinguish two reasons that value can be missing, because they mean opposite things. If the API returns no field, omit it. If the source exists but has never been scanned, render `never` in amber, as the mock does. A registered-but-unscanned source is the row a steward most needs to see, and silently omitting its date makes it the least visible thing on the screen — the same failure the `ui/discover: surface registered sources with zero keyword hits` commit was written to fix. And give each schema row a **Select** action that sets step 2's schema dropdown and navigates there; the tree browses but cannot act, so today a steward reads it and then re-picks the same schema from a dropdown one step later.
 
 **Step 10 carries three score-related tools and they are not interchangeable.** No phase section covers step 10 — it ships today — so the distinction is recorded here. `run_mcc_scan` triggers the catalog scan that executes CDQ rule specs against live data and publishes scores as a side effect of the run. `upload_dq_scores` pushes a batch of scores to CDGC directly, without a scan. `propagate_dq_score` pushes a single score to one named asset — a DQRO or a column — resolving the asset by name when no rule occurrence id is given, and carrying dimension, run date and pass/fail row counts. It is the tool to reach for when a score needs correcting or backfilling against one asset, which is the common case after a partial run. All three are `ai_governance` tools and all three are reachable today; only the first two were surfaced in earlier drafts.
 
@@ -99,6 +101,16 @@ Profiling is a ladder step ahead of taxonomy, not a substep of rule creation. Th
 ### Interaction contract
 
 Three patterns from `index.html` are load-bearing. Everything added below conforms to them rather than inventing new ones.
+
+**0. The selection is a triple, carried forward.** Every step that acts on a dataset acts on `{database, schema, table}`, and the selection is made once at step 2 and inherited by every step after it. Step 2 therefore carries three controls, not two: Database above Schema above Table, each populated from the step above and each falling back to free text.
+
+**All three are dropdowns. None is free text.** Database, schema and table names are case-sensitive against `INFORMATION_SCHEMA` — Snowflake uppercases unquoted identifiers, so a typed lowercase name returns "not found" with nothing indicating why. A dropdown removes that class of failure entirely, and there is nothing to type that the catalog does not already know.
+
+They populate from step 1. `catalog_sources_grouped` is already source → database → schema → tables, the same structure `DiscoverResult` renders, so selecting a database filters the schema list and selecting a schema filters the table list. No new endpoint is needed.
+
+This makes step 2 dependent on step 1 having run, which is a departure from rule 5 below. Handle it the way Domain Structure already handles its unmet dependency at `index.html` ~2111: say Discover has not run and offer to jump to it, rather than presenting three empty dropdowns. The consequence to accept knowingly is that a table absent from the catalog cannot be selected, so profiling something before it is onboarded is not possible from this screen.
+
+Note what this does not fix: reaching a database requires the connecting role to hold USAGE on it. A role scoped to one schema makes every other schema return "not found in INFORMATION_SCHEMA", because Snowflake's INFORMATION_SCHEMA only shows what the current role can see — a missing grant and a missing table are indistinguishable. Grant across the databases in scope rather than per schema, or this surfaces as a UI bug every time someone picks a new schema.
 
 **1. Select-then-run.** A step that acts on a thing renders its selector *above* the Run button, in the `bg-slate-50 rounded-xl p-4 border border-slate-300` input card. The step does not assume a selection exists. See the Scan step (`index.html` ~1935): a Schema dropdown whose selection derives the catalog source, then a Table dropdown that appears only when the schema is not `__ALL_SCHEMAS__`. Both dropdowns fall back to a free-text `<input>` when the upstream step returned no options — which is what keeps a step usable when Discover has not run yet.
 
@@ -144,13 +156,37 @@ Steps 10, 13 and 15 use something different and it is not a violation of that ru
 
 Access granting additionally carries **dual control**: an approval waits for a second approver, a requester cannot approve their own request, and step 15 shows an *Awaiting second approver* panel with a live count.
 
+### The shell
+
+The frame around the steps is as much of the mock as the step bodies are, and the current build differs from it in ways that cost information rather than only appearance.
+
+**Sidebar, 264px, white, right border.**
+
+Header block: a 7×7 rounded indigo square carrying `I`, then `Incept IDMC Agent` in bold with `GOVERNANCE AUTOMATION` beneath it in tiny tracked uppercase slate.
+
+The ladder itself is grouped, not a flat list of fifteen. Two groups — **Governance** for steps 1 to 11 and **Marketplace** for 12 to 15 — each introduced by a small bold uppercase slate label and rendered as a white rounded card with dividers between rows. The grouping is presentational and does not reintroduce sections: there is still one ladder, one sequence, one numbering.
+
+Each row carries four things: a status dot, `N · Label`, any badges, and — the part currently missing — **a second line of per-step status text**. `3 sources · 17 tables` under Discover, `CUSTOMER_POSITIONS · 19 cols` under Scan, `Awaiting steward review` under Domain Structure, `Not started` under anything unrun. That line is how a steward reads pipeline state without clicking through fifteen steps, and a ladder without it is a table of contents rather than a status board. Badges: `NEW` in indigo for steps 3 and 7, `REVIEW` in amber on gated steps, muted slate with a phase tooltip where the gate is declared but unbuilt. A skipped step renders struck through. The active row takes an indigo-50 background.
+
+Sidebar footer: **Reset** and **Run all unattended** as small bordered buttons, with the note *Unattended skips every review gate. Use for reruns, not first passes.* beneath them. This placement is the point — the run-all belongs here, small and annotated, not in the header where it reads as a primary action. The note is doing real work: it tells a steward the control exists for reruns and warns what it bypasses, which is the argument the gates exist to make.
+
+**Header, 56px, white, bottom border.**
+
+Left: an `Incept Data Solutions` pill in slate with a border, then the breadcrumb `N · Label` in semibold slate.
+
+Right, in order: **six individual dots**, one per MCP server, then `6 of 6 online`. Six dots and a count say which server is down at a glance; a single `6/6` string does not, and naming the failing server is what the health indicator was for. Then the `⚑ Awaiting approver N` chip in amber, hidden until a dual-control approval is pending and clicking through to the settings panel. Then `Session · Nm` with its own dot — session age is the leading indicator for the expiry failure this document calls the most likely demo failure, so it belongs on screen. Then the ⚙ opening the slide-over.
+
+Main region: scrolling, 24px padding, content capped at 1080px.
+
 ### Per step
 
 **1 · Discover Catalog** — collapsed tree per the ladder-table note. Summary cards above. Last-scanned on each source header; Select on each schema row.
 
-**2 · Scan Table** — card *Column metadata*, columned COLUMN · TYPE · NULLABLE · DESCRIPTION, header pill showing the column count, empty descriptions rendered as muted `none` rather than blank. Beneath it, two panels side by side: *Lineage* as the collapsible tree with an `N up · M down` pill, and *Impact if this changes* columned DOWNSTREAM · HOPS · SEVERITY with a high-severity count pill.
+**2 · Scan Table** — card *Column metadata*, columned COLUMN · TYPE · NULLABLE · DESCRIPTION, header pill showing the column count. Only two of those four are available today: the scan tool returns `data_type` but the UI wrapper drops it before forwarding `columns_preview`, so forward it; NULLABLE and DESCRIPTION are not in the scan output at all and render muted — `—` and `none` respectively, as the mock already shows for description. Do not synthesise either. Beneath it, two panels side by side: *Lineage* as the collapsible tree with an `N up · M down` pill, and *Impact if this changes* columned DOWNSTREAM · HOPS · SEVERITY with a high-severity count pill.
 
-**3 · Profile Data** — one card *Profile results*, columned COLUMN · NULL % · DISTINCT · MIN / MAX · READS AS, null bar red above 10%, duplicate badge on DISTINCT, out-of-range values called out in amber. Header carries a `NEW STEP` badge and the query time. Footer callout: *Why this runs before taxonomy*.
+**3 · Profile Data** — one card *Profile results*, columned COLUMN · NULL % · DISTINCT · MIN / MAX · READS AS, null bar red above 10%, duplicate badge on DISTINCT. Header carries a `NEW STEP` badge; time the request in the UI if a duration is wanted, since no tool returns one.
+
+On amber highlighting: an earlier revision asked for out-of-range values generally, which is not derivable — no per-column valid range exists anywhere in the profile payload. One narrow case is derivable and is the one the mock shows: a maximum date in the future. Flag that and nothing else. Footer callout: *Why this runs before taxonomy*.
 
 **4 · Generate Taxonomy** — card *Proposed taxonomy*, an indented hierarchy: domain in bold with a `DOMAIN` badge, subdomain indented beneath, terms as muted text below that. **Each classification derived from profiling carries its evidence inline in indigo** — `← classified from 5 distinct codes`. That annotation is the Opella argument rendered on screen and is the most important element on the step; a taxonomy without it is the descriptions he rejected. Header badge `PROFILE INFORMED`. Footer: *Nothing written to the catalog yet. The next step is where you choose*, with a *Review and select →* button.
 
@@ -338,11 +374,29 @@ The capability Anurag asked for by name, the answer to the Opella objection, and
 | Selector | table dropdown carrying **`{database, schema, table}`**, text fallback |
 | Result | one card, per-column statistics |
 
-**The selector must pass database and schema, not just a table name.** `compute_profile_from_snowflake(object_name, database=None, schema=None, …)` falls back to `IDMC_DQ_SCHEMA_PATH` when they are omitted, so a table selected from any source other than the configured default resolves to the wrong schema and fails with "not found in INFORMATION_SCHEMA". The profile cache is already keyed on the triple; the call must carry the same triple.
+**The selector must pass database and schema, not just a table name.** `compute_profile_from_snowflake(object_name, database=None, schema=None, …)` resolves `db = database or SNOWFLAKE_DEFAULT_DATABASE` and `sc = schema or SNOWFLAKE_DEFAULT_SCHEMA`, which read `SNOWFLAKE_DATABASE` and `SNOWFLAKE_SCHEMA` and default to `INCEPT_GOV_DEV` and `DQ_TEST` in source. A table selected from anywhere else therefore resolves to the wrong path and fails with "not found in INFORMATION_SCHEMA". The profile cache is already keyed on `{connection, schema, table}`; the call must carry the same triple.
+
+**The env defaults should not be load-bearing, and arguably should not resolve at all.** `INCEPT_GOV_DEV` / `DQ_TEST` are one org's development values compiled into product source, and a call that omits the triple silently succeeds against the wrong database rather than failing. That is the worst available behaviour: it produced a "table not found" error that read as a code bug for an hour when the code was fine and the target was wrong. Once the UI passes the triple on every call, the defaults are dead weight — and they would be better as no default at all, failing with "no database specified" rather than reaching into somebody's dev org. Same applies to `SNOWFLAKE_ROLE` defaulting to `ACCOUNTADMIN`, which is a poor default on its own merits.
+
+None of this needs config per source system. Once the selector carries `{database, schema, table}`, a different table, schema or database requires no change; only a different Snowflake account needs credentials. What does not scale is the connector limit below, which is architectural rather than configurable.
+
+Note the second, subtler config trap: `common/snowflake.py` opens the connection against `SNOWFLAKE_GOVTEST_DB`, which defaults to `GOVERNANCE_SCALE_TEST` — a different variable and a different default from the one the query qualifies with. The connection can succeed against one database while the query fully-qualifies into another, which works only if the role holds USAGE on both. The tool's own error text names this and case sensitivity as the two causes; keep that text visible rather than replacing it with something friendlier.
 
 **`compute_profile_from_snowflake` is Snowflake-only.** It issues SQL against the warehouse directly. For a Databricks, Oracle or any other source it cannot work at all, and the UI must disable the local path with a reason rather than letting it fail. Where it does apply it is the better path: one query, immediate, no CDGC propagation wait, and it returns the exact shape `recommend_dq_rules` expects.
 
 **The Informatica path needs a profile to exist first.** `run_profile` fails with "No profile defined for connection=… + object=…" when the connector's metadata-fetch endpoint cannot enumerate columns for an unattended auto-define, which is the case for the v2 Snowflake connector. Someone must create the profile once in IDMC → Data Profiling → New Profile. Treat this as a per-table environmental prerequisite, not a bug, and say so on screen — the error text is accurate and should be surfaced rather than swallowed.
+
+**A failed run must clear the previous result.** Observed live: with `ACCRUAL_BRIDGE_MONTHLY` selected, three substeps failed and `get_profile_results` returned a cached profile for `REF_COMPANY_CODE`, which rendered under the new table's name with a row count from one run and column statistics from another. The give-away was 242 distinct values against 240 rows — impossible within one dataset, and only visible to someone checking.
+
+Two rules follow. A result panel belonging to a different `{connection, schema, table}` than the current selection is never displayed; changing any part of the triple clears it. And `get_profile_results` must be filtered by that triple rather than returning whichever profile the service last created — the cache is already keyed on it, so the lookup should be too.
+
+This matters well beyond the display. Steps 4 and 7 read the stored profile. A profile returned for the wrong table means taxonomy classifies one dataset's columns using another's statistics, and rule recommendations cite evidence that was never measured on the asset they apply to. Both would look entirely plausible on screen.
+
+**Forward the column list from step 2.** `create_profile` fails with "No columns provided for 'X' and CDGC search returned none. Pass columns=[…] explicitly." Its CDGC lookup resolves nothing even for a table step 2 has just scanned and rendered every column of. The UI holds that list already, so pass it — `[{'name', 'dataType', 'precision', 'scale'}]` — rather than letting the tool re-derive what the previous step established. This is the same class of gap as the selector not carrying database and schema: state exists one step upstream and is not handed forward.
+
+**Do not auto-create a profile to work around it.** The backend currently attempts `create_profile` when none is found, which replaces a precise prerequisite message with whatever `create_profile` fails on, and performs a write nobody asked for. Remove the fallback and surface the original error. This is the same class of defect as a status dot reporting success over failure: a silent action producing a misleading result.
+
+Whether this limitation extends beyond the v2 Snowflake connector is untested. The error names that connector specifically, and other connectors may auto-define without any console work — which would invert the picture, leaving Snowflake as the one source needing manual setup while also being the only one with the fast direct path. Worth fifteen minutes against an Oracle or Databricks table before it is repeated to a client.
 
 Profiling through the service is asynchronous: `execute` returns a job id and the UI polls `GET {PROFILING_API_BASE}/job/{job_id}`. Drive the existing `stepProgress` bar from the poll.
 
@@ -352,7 +406,7 @@ Profiling through the service is asynchronous: `execute` returns a job id and th
 
 `COLUMN` · `NULL %` · `DISTINCT` · `MIN / MAX` · `READS AS`
 
-`NULL %` as a small bar with the percentage, turning red above the 10% band `recommend_dq_rules` uses. `DISTINCT` carrying a `N dup` badge where distinct count is below row count. `READS AS` is a UI-side inference from distinct counts, null rates and ranges — identifier, free text, measure, code list, date. It is derived for display and does not come back from any tool, so do not present it as an IDMC output.
+`NULL %` as a small bar with the percentage, turning red above the 10% band `recommend_dq_rules` uses. `DISTINCT` carrying a `N dup` badge — but only where duplication is a defect. On live data the badge fires on every single column, because distinct count is below row count for almost everything, and a badge that appears on every row carries no signal. Worse, it contradicts the adjacent column: a code list reading `4 dup` is being flagged for the low cardinality that makes it a code list. Suppress the badge where `READS AS` resolves to code list, and on columns whose distinct count is a small fraction of the row count — duplication only means something on a column that looks like an identifier. `READS AS` is a UI-side inference from distinct counts, null rates and ranges — identifier, free text, measure, code list, date. It is derived for display and does not come back from any tool, so do not present it as an IDMC output.
 
 Beneath the table, the callout that makes the case for the step's position:
 
@@ -482,7 +536,7 @@ Group children by `toLocation` / `fromLocation` and put the location on the grou
 
 The trade against a graph is real and accepted: a tree duplicates a node that appears in two branches and loses the visual sense of convergence. What it buys is legibility on real pipelines, an existing component instead of a new one, and consistency with step 1, where the steward has already learned this interaction. If a genuine topology view is ever wanted, that is the IDMC lineage visualiser and the spec's position is unchanged: do not rebuild it.
 
-Severity comes from `_classify_severity`: fewer than 5 distinct downstream nodes is LOW, fewer than 20 is MEDIUM, above that is HIGH — and any BI-type asset downstream, meaning a report, dashboard, metric or KPI, forces HIGH regardless of count.
+Severity comes from `_classify_severity`: fewer than 5 distinct downstream nodes is LOW, fewer than 20 is MEDIUM, above that is HIGH. A BI-type asset downstream — report, dashboard, metric or KPI — escalates to HIGH **only when distinct nodes also reach 5**; the guard is `if has_bi and distinct_nodes >= SEVERITY_LOW_MAX`. An earlier revision of this document said any BI asset forces HIGH regardless of count. It does not. Render whatever the function returns and do not recompute severity in the UI.
 
 **Asset display names are not unique in CDGC.** Databricks catalogues every notebook command as an asset named `Command 1`, `Command 2` and so on inside its parent job, so a view rendered from `core.name` alone shows a dozen different transformations all reading `Command 1` and appears to route everything through a single node. `_flatten_lineage_hops` already returns `fromLocation` / `toLocation` from `core.location` and `fromId` / `toId` from `core.identity` on every edge; the tree layout below groups on location, which resolves this. `distinct_nodes` counts by identity and is correct regardless — it is only the label that collapses.
 
@@ -658,7 +712,7 @@ Phase 1 is also the only phase that changes the behaviour of a step that already
 2. **Async polling pattern.** Profiling, export, import, and job runs are all fire-then-poll. Build one reusable poller rather than four. The existing `stepProgress` bar is the display surface.
 3. **Empty states that explain.** Lineage with no cataloged dataflow, scores awaiting rollup, and profiling on a connector that cannot enumerate columns all return legitimately empty results. Each needs copy explaining why, or it reads as a broken feature in front of a client. The Scan step's red "Tables not found in catalog" panel is the model.
 4. **Name-to-identity resolution is a hidden first call.** Most CDGC tools resolve a friendly name to an asset id before doing real work. When resolution returns nothing, say "asset not found in catalog," not "no results."
-5. **Every selector degrades to text.** Dropdowns populate from upstream step state. When the upstream step has not run, the control becomes a free-text input rather than an empty disabled dropdown — this is what makes any step independently runnable, which is what makes the ladder demoable out of order.
+5. **Every selector degrades to text, except the step 2 triple.** Dropdowns populate from upstream step state. When the upstream step has not run, the control becomes a free-text input rather than an empty disabled dropdown — this is what makes any step independently runnable, which is what makes the ladder demoable out of order. The database, schema and table controls on step 2 are the deliberate exception: they stay dropdowns because identifier case matters and a typo there produces a "not found" error indistinguishable from a missing grant. They show an unmet-dependency state pointing at step 1 instead.
 6. **Upstream dependency states are explicit.** Steps 4 and 7 depend on step 3, step 9 on step 8, step 11 on step 10. Where a dependency is unmet, say which step to run and offer to jump to it — the pattern already exists at `index.html` ~2111, where Domain Structure tells the user to run Generate Taxonomy first. The step 2 lineage substeps are the exception: their dependency is the upfront Relationship Discovery scan, which sits outside the ladder entirely, so the unmet state points at catalog configuration rather than at another step.
 
 7. **Composite status is derived from results, not from HTTP completion.** A step that fans out to several tools — 5, 8, 12, 14, 15 — must compute its status dot from the per-tool outcomes it returns, not from the request having finished. Today step 12 turns green when all four of its tools have failed, because the call completed; the rows carry the truth and the dot contradicts them. This is the same defect class as the silent success that Phase 0 item 7 eliminated, one layer up: item 7 stopped a tool from being skipped, and this stops four failed tools from reading as a success. The dot is what a steward scans; the rows are what they read afterwards, if the dot gives them a reason to.
