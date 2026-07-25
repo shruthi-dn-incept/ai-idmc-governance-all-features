@@ -102,13 +102,36 @@ Profiling is a ladder step ahead of taxonomy, not a substep of rule creation. Th
 
 Three patterns from `index.html` are load-bearing. Everything added below conforms to them rather than inventing new ones.
 
-**0. The selection is a triple, carried forward — but the catalog does not carry the database.** Every step that acts on a dataset acts on `{database, schema, table}`, made once at step 2 and inherited after. An earlier draft of this rule assumed `catalog_sources_grouped` was `source → database → schema → tables` and that a Database dropdown could be filled from it. It cannot: discover returns `database: ''` for every source (the asset `externalId` is `connection/schema/table`, no database segment), and what step 1 calls a "source" is really a schema. So step 2's top control is **Source → Schema → Table**, all dropdowns, no free text — identifier case is significant against `INFORMATION_SCHEMA`, and a typed name that doesn't match is indistinguishable from a missing grant.
+**0. The selection is a triple, carried forward — but the catalog does not supply the database.** Every step that acts on a dataset acts on `{database, schema, table}`, and the selection is made once at step 2 and inherited by every step after it.
 
-**The database is derived, not selected.** Because the catalog cannot say which database a schema lives in, the app holds a single `SCHEMA_TO_DATABASE` map — one named constant, one place to extend. Step 3 derives the database from the selected schema and shows it **read-only**. A schema not in the map — a Databricks schema, or a new one — leaves the Database field **editable** as an escape hatch, noted as not a Snowflake warehouse-path schema, and is **never** defaulted to a hard-coded database. (Defaulting to `INCEPT_GOV_DEV` silently mis-profiled every table outside it — `GOVTEST_BILLING` is in `GOVERNANCE_SCALE_TEST_C`, not `INCEPT_GOV_DEV`.)
+The database is the problem, and an earlier revision of this document got it wrong. It claimed `catalog_sources_grouped` is `source → database → schema → tables`. It is not. Discover returns `database: ''` for every source, because the catalog stores each asset's external id as `connection/schema/table` with no database segment. What step 1 labels a "source" — `DQ_TEST`, `GOVTEST_BILLING`, `GOVTEST_CLINICAL` — is a **schema**. The real Snowflake database each schema lives in is nowhere in the catalog payload.
 
-This makes step 2 dependent on step 1 having run. Handle it the way Domain Structure handles its unmet dependency (`index.html` ~2111): say Discover has not run and offer to jump to it, rather than empty dropdowns. A table absent from the catalog cannot be selected.
+This breaks any design that reads the database from discover. It cannot be read from discover; it is not there. Two consequences follow, and both are load-bearing:
 
-Note what this does not fix: reaching a database still requires the connecting role to hold USAGE on it. Snowflake's `INFORMATION_SCHEMA` only shows what the current role can see, so a missing grant and a missing table are indistinguishable — grant across the databases in scope, not per schema.
+- Step 2's top control is **Source → Schema → Table**, and "Source" is honest — it is what the catalog provides. It is not a database picker.
+- The database must come from a **schema-to-database map the application holds**, because the catalog cannot provide it. `SHOW DATABASES` plus the schema layout gives the authoritative mapping:
+
+  | Database | Schemas |
+  |---|---|
+  | `INCEPT_GOV_DEV` | `DQ_TEST`, `DQ_FRAMEWORK` |
+  | `GOVERNANCE_SCALE_TEST` | `GOVTEST_CLAIMS`, `GOVTEST_CLINICAL`, `GOVTEST_MEMBER`, `GOVTEST_PROVIDER` |
+  | `GOVERNANCE_SCALE_TEST_C` | `GOVTEST_BILLING`, `GOVTEST_ENROLLMENT`, `GOVTEST_RISK`, `GOVTEST_UTILIZATION` |
+  | `GOVERNANCE` | `REGISTRY` |
+  | `RND` | `RND_CLINICAL` |
+
+  When a schema is selected, its database is **derived from this map and displayed, not typed**. A steward who picks `GOVTEST_BILLING` must not also have to know it lives in `GOVERNANCE_SCALE_TEST_C` — telling them which database a schema belongs to is the UI's job, and is exactly the provenance the ladder exists to surface. Databricks and other non-Snowflake schemas have no entry and no warehouse-path database; the local profile path is disabled for them regardless, so their absence from the map is correct.
+
+  This map is configuration, not catalog. It changes only when a database or schema is added, so it belongs in one named place — a constant the app reads — not scattered across the UI. When the account gains a database, the map gains a row; nothing else changes.
+
+Each control still falls back to free text when its upstream has not run, except the Source/Schema/Table triple on step 2, which stays dropdowns for the reason in rule 5. The derived Database field on step 3 is read-only when the schema is in the map and editable only as an escape hatch for a schema the map does not yet cover.
+
+**Source, Schema and Table are dropdowns; Database is derived, not entered.** See rule 0 — the catalog has no database segment, so there is no database to pick from discover. The three dropdowns are Source → Schema → Table, populating from `catalog_sources_grouped` (`connection → schema → tables`), each filtering the next. The Database shown on step 3 is looked up from the schema-to-database map when the schema is chosen, and displayed read-only.
+
+Dropdowns rather than free text for the same reason throughout: identifier case matters against `INFORMATION_SCHEMA`, and a typed lowercase name returns "not found" indistinguishable from a missing grant. The one editable case is the derived Database, and only when the selected schema is absent from the map — an escape hatch, not the normal path.
+
+This makes step 2 dependent on step 1 having run, which is a departure from rule 5 below. Handle it the way Domain Structure already handles its unmet dependency at `index.html` ~2111: say Discover has not run and offer to jump to it, rather than presenting three empty dropdowns. The consequence to accept knowingly is that a table absent from the catalog cannot be selected, so profiling something before it is onboarded is not possible from this screen.
+
+Note what this does not fix: reaching a database requires the connecting role to hold USAGE on it. A role scoped to one schema makes every other schema return "not found in INFORMATION_SCHEMA", because Snowflake's INFORMATION_SCHEMA only shows what the current role can see — a missing grant and a missing table are indistinguishable. Grant across the databases in scope rather than per schema, or this surfaces as a UI bug every time someone picks a new schema.
 
 **1. Select-then-run.** A step that acts on a thing renders its selector *above* the Run button, in the `bg-slate-50 rounded-xl p-4 border border-slate-300` input card. The step does not assume a selection exists. See the Scan step (`index.html` ~1935): a Schema dropdown whose selection derives the catalog source, then a Table dropdown that appears only when the schema is not `__ALL_SCHEMAS__`. Both dropdowns fall back to a free-text `<input>` when the upstream step returned no options — which is what keeps a step usable when Discover has not run yet.
 
@@ -150,7 +173,7 @@ The mock is the layout reference for all fifteen steps. Each entry below is what
 
 Steps 5, 6 and 7 use `DomainApprovalPanel` — a multi-select review of proposed items before anything is written. That remains the single approval implementation.
 
-Steps 10, 13 and 15 use something different and it is not a violation of that rule: a **confirmation modal** for one irreversible action, listing its consequences in plain language before it proceeds. Publishing to the catalog lists what the scan will do and that it cannot be retracted. Publishing to the marketplace lists who will see the collection and that unpublishing does not revoke granted access. Approving access lists what the consumer gains and which identifying columns it includes. These are not selections to review; they are decisions to confirm, and the consequence list is the substance of the screen.
+Steps 10, 13 and 15 use something different and it is not a violation of that rule: a **confirmation modal** for one irreversible action, listing its consequences in plain language before it proceeds. **Built and live** (`d67f933`): modal open/cancel verified, and for step 15 the dual-control queue, header chip, disabled self-approve and red withdraw. What remains for these steps is conformance to the layouts below, not building the pattern. Publishing to the catalog lists what the scan will do and that it cannot be retracted. Publishing to the marketplace lists who will see the collection and that unpublishing does not revoke granted access. Approving access lists what the consumer gains and which identifying columns it includes. These are not selections to review; they are decisions to confirm, and the consequence list is the substance of the screen.
 
 Access granting additionally carries **dual control**: an approval waits for a second approver, a requester cannot approve their own request, and step 15 shows an *Awaiting second approver* panel with a live count.
 
@@ -382,6 +405,8 @@ Note the second, subtler config trap: `common/snowflake.py` opens the connection
 
 **`compute_profile_from_snowflake` is Snowflake-only.** It issues SQL against the warehouse directly. For a Databricks, Oracle or any other source it cannot work at all, and the UI must disable the local path with a reason rather than letting it fail. Where it does apply it is the better path: one query, immediate, no CDGC propagation wait, and it returns the exact shape `recommend_dq_rules` expects.
 
+**Wide DECIMAL columns exceed the profiling engine's ceiling.** IDMC's profiling service rejects DECIMAL/NUMBER precision above roughly 28 with `PROFILE_MDL_00006`; Snowflake and Databricks both allow 38, and `CUSTOMER_POSITIONS.EXPOSURE_AMOUNT` is `NUMBER(38,2)` — the demo table triggers this on the Informatica path. The column forward clamps precision to 28 (keeping scale) rather than skipping the column: a column silently absent from a profile reads as a broken tool, and precision does not affect the min/max/null statistics profiling returns. This is a general rule, not a Databricks-specific one — the warehouse path avoids it only because it bypasses IDMC.
+
 **The Informatica path needs a profile to exist first.** `run_profile` fails with "No profile defined for connection=… + object=…" when the connector's metadata-fetch endpoint cannot enumerate columns for an unattended auto-define, which is the case for the v2 Snowflake connector. Someone must create the profile once in IDMC → Data Profiling → New Profile. Treat this as a per-table environmental prerequisite, not a bug, and say so on screen — the error text is accurate and should be surfaced rather than swallowed.
 
 **A failed run must clear the previous result.** Observed live: with `ACCRUAL_BRIDGE_MONTHLY` selected, three substeps failed and `get_profile_results` returned a cached profile for `REF_COMPANY_CODE`, which rendered under the new table's name with a row count from one run and column statistics from another. The give-away was 242 distinct values against 240 rows — impossible within one dataset, and only visible to someone checking.
@@ -476,6 +501,8 @@ Validate, save, take the mapping ID from the URL, set `IDMC_DQ_TEMPLATE_MAPPING_
 **Carry this constraint into the UI regardless:** the Mapping Task substep must detect a missing or unresolvable template on step load and show setup guidance rather than failing at run time. The template will exist for this demo; it will not exist in a client's org on day one.
 
 **Done when:** a schedule can be created and a job triggered and monitored, live, without leaving the ladder.
+
+**Template binding verified end-to-end (25 Jul).** `generate_dq_mapping_task` was run against `M_DQ_Generic` (id `bIWvvmaXtCXbgPPpPRFE4o`) for `CUSTOMER_POSITIONS`, and the resulting IDMC session executed cleanly: parameter override confirmed at runtime (`target object ... overridden with the parameter name = CUSTOMER_POSITIONS_BAD_RECORDS`), zero transformation errors, 19 rows requested / 19 applied / 0 rejected into the target. This closes the highest-consequence untested path — the code binds against the current parameter names (`Src_Object`, `Tgt_Object`, `Input_Field_Map`), not the pre-rename spellings, and the completeness rule runs against real data. The Cloud Data Integration claims are no longer theoretical. Session warnings about optional session attributes (Error Log DB Connection prefix, Truncate Target Table, worklet parameter-file section) are IDMC defaulting unset optionals and did not affect the run.
 
 ---
 
@@ -666,6 +693,41 @@ Destructive and irreversible from the UI. Red rather than emerald, with the affe
 | `register_in_cdgc` vs `set_dq_occurrences` | two paths to the same outcome | document which is canonical |
 | `get_profile_results` vs `_direct` | fallback variant | keep both in code, expose one |
 | `auto_approve_access` | bypasses the step 15 approve gate | keep as a route, never wire to run-all |
+
+---
+
+## Where the model is used, and where it deliberately is not
+
+A recurring question, so it lives here rather than being reconstructed from the tool tables each time.
+
+**The dividing line is judgment versus execution.** Every step that reasons — classifies, matches, recommends — uses the LLM. Every step that acts — creates, schedules, publishes, provisions — is deterministic API orchestration with no model in the path. This is not an accident of what got built first; it is the product's argument. Against a freeform chatbot, the differentiator is not *more* AI, it is AI placed at the judgment points with auditable execution and human gates around it. When this agent creates a rule or grants access, that is a real API call, not a model's guess. Adding a model to a step that is currently a clean API call would weaken exactly the claim the comparison document makes.
+
+### Built and using the model today
+
+| Step | Tool | What the model does |
+|---|---|---|
+| 4 Generate Taxonomy | `generate_governance_taxonomy` | reasons a domain / subdomain / term hierarchy from profiled columns |
+| 6 Curate Columns | `suggest_terms_for_asset` | matches columns to existing glossary terms — semantic, not string match |
+| 7 Recommend Rules | `recommend_dq_rules` | reasons over the step 3 profile to propose rules per column; no HTTP at all |
+| 11 Monitor Quality | `recommend_remediation` | reasons over failing scores to suggest fixes |
+
+Everything else — discover, scan, profile, rule *creation*, scheduling, publishing, delivery, access — is deterministic. The tell in the source is the tool that returns "no HTTP; pure reasoning" versus the one that makes an API call.
+
+### Intended, not yet built
+
+One is already a numbered phase. The other four are candidates, ordered by value-to-risk, and are recorded here so the roadmap has a single reference — none is committed.
+
+**Natural-language rule authoring — Phase 6, committed.** `create_dq_rules` takes a plain-English rule description and builds the spec. This is the strongest form of the "create DQ rule specifications" claim and the one net-new *judgment* use with a phase behind it. It lands with Phase 6; see that section.
+
+**Impact narrative — candidate, highest value, lowest risk.** Step 2's impact panel is a severity count today. A model turning "3 downstream BI assets, HIGH" into "changing this column breaks the Q3 executive dashboard and two regulatory reports" is the kind of sentence that lands in a demo. Low risk because it narrates deterministic output — the severity and the asset list are still computed by `_classify_severity`; the model only describes what is already there. It moves no action behind a model.
+
+**Lineage explanation — candidate, same shape as impact.** The tree shows edges; a model could summarize what the pipeline actually does in a sentence. Same low-risk property: it explains deterministic lineage output rather than producing it.
+
+**Profiling interpretation — candidate, medium value.** `READS AS` is a UI heuristic over distinct counts and null rates today. A model could give a richer semantic read — "this looks like a hashed customer id," "these values are ISO currency codes" — per column. Medium risk: it would sit next to hard statistics, so it must be visibly labelled as inference and never presented as measured, or it undercuts the trust the hard numbers earn.
+
+**Anomaly flagging in monitoring — candidate, medium value, most speculative.** Step 11 plots a score trend. A model could watch the pattern and surface "this degradation matches a schema change" rather than leaving the reader to infer it. Most speculative because it is the one that edges toward prediction rather than description, and prediction is where a model is most likely to be confidently wrong in front of a client.
+
+**Sequencing note.** All four candidates are *narrative-over-deterministic-output* except profiling interpretation and anomaly flagging, which add inference beside hard data. That split is the priority order: impact narrative and lineage explanation are safe additions whenever there is time after the seven phases, because they cannot produce a wrong action, only a wrong sentence about a right one. Profiling interpretation and anomaly flagging need the "this is inference, not measurement" framing built in before they ship. None blocks the demo, and none should displace a phase — they are what comes after 28-of-28, not part of reaching it.
 
 ---
 
