@@ -293,7 +293,9 @@ def _search_assets(
         filters.append({"type": "simple", "attribute": "core.classType", "values": [class_type]})
     if extra_filters:
         filters.extend(extra_filters)
-    body: dict[str, Any] = {"from": 0, "size": int(size)}
+    # CDGC search rejects size > 100 ("size passed can not be greater than 100"),
+    # so clamp here — the single choke point for every search caller.
+    body: dict[str, Any] = {"from": 0, "size": min(int(size), 100)}
     if filters:
         body["filterSpec"] = filters
 
@@ -579,9 +581,10 @@ def detect_glossary_issues(
                 })
 
     if "orphans" in wants or "all" in wants:
-        # Check neighborhood for a sample of terms. Bulk-checking all is
-        # expensive; we cap at the first 50 to keep latency reasonable.
-        for t in terms[:50]:
+        # Check neighborhood for a sample of terms. Each check is a serial
+        # per-term GET (~2s), so 50 would take ~2 min and risk a UI timeout on
+        # this secondary step; cap at 12 to keep the call responsive in the demo.
+        for t in terms[:12]:
             aid = _id_of(t)
             if not aid:
                 continue

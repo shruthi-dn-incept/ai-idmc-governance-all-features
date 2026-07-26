@@ -1314,6 +1314,29 @@ def create_schedule(
 
     Returns: {id, name, interval, frequency, startTime}.
     """
+    # Hourly/Weekly/Biweekly require day-of-week selection or the API rejects them
+    # with UI_10612 ("Select days of the week"); the UI has no day picker, so
+    # default to every day when none is given rather than erroring.
+    if interval in ("Hourly", "Weekly", "Biweekly") and not any(
+        [sun, mon, tue, wed, thu, fri, sat]
+    ):
+        sun = mon = tue = wed = thu = fri = sat = True
+
+    # A duplicate name is rejected with an opaque REPO_10301 ("internal error …
+    # while saving the schedule"). Suffix to the next free slot so a re-run of the
+    # demo creates cleanly instead of throwing a red error.
+    try:
+        _lr = _request_v2("GET", "/api/v2/schedule")
+        if _lr.status_code == 200:
+            _existing = {s.get("name") for s in (_lr.json() or []) if isinstance(s, dict)}
+            if name in _existing:
+                _base, _n = name, 2
+                while f"{_base}_{_n}" in _existing:
+                    _n += 1
+                name = f"{_base}_{_n}"
+    except Exception:
+        pass
+
     body: dict[str, Any] = {
         "@type":        "schedule",
         "orgId":        DEFAULT_ORG_ID,
