@@ -235,6 +235,41 @@ function compositeFailure(stepDef, data) {
   return `${failed.length} of ${keys.length} tools failed: ${failed.join(", ")} — the rows below carry the detail`;
 }
 
+// Tool errors arrive as the raw MCP repr:
+//   [TextContent(type='text', text="Error executing tool run_profile: … HTTP 400:
+//    {"error":{"code":"PROFILE_SVC_00047","message":"…"}}", annotations=None, meta=None)]
+// Render only the human part: keep the tool name + error code (diagnostic), take the
+// message from the JSON body if present else the text after "Error executing tool X:",
+// and drop the TextContent/annotations/meta wrapper. Idempotent on already-clean text.
+function formatToolError(raw) {
+  if (raw == null) return "";
+  let s = String(raw);
+  const tc = s.match(/text=(["'])([\s\S]*?)\1,\s*(?:annotations|meta)=/);
+  if (tc) s = tc[2];
+  s = s.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\n/g, " ").trim();
+  const tm = s.match(/Error executing tool\s+([A-Za-z0-9_]+)\s*:\s*/);
+  const tool = tm ? tm[1] : null;
+  const code = (s.match(/"code"\s*:\s*"([^"]+)"/) || [])[1] || null;
+  const msg  = (s.match(/"message"\s*:\s*"([^"]+)"/) || [])[1]
+             || (tm ? s.slice(tm.index + tm[0].length) : s);
+  const head = [tool, code].filter(Boolean).join(" · ");
+  return (head ? `${head}: ${String(msg).trim()}` : String(msg).trim()).trim();
+}
+
+// PROFILE_SVC_00047 is an IDMC concurrency lock ("Another instance of the task is
+// currently running"), not a code bug — surfaced with its own line + manual retry,
+// never auto-retried.
+const PROFILE_BUSY_CODE = "PROFILE_SVC_00047";
+const PROFILE_BUSY_MSG  = "A profiling run for this table is already in progress — wait for it to finish, or use Warehouse query.";
+function isProfilingBusy(raw) { return String(raw || "").includes(PROFILE_BUSY_CODE); }
+
+// A step whose primary path produced a real result must not read Failed just
+// because a secondary substep errored afterwards (requirement 7, inverted). A
+// stored non-error result object counts as a primary success.
+function stepHasPrimaryResult(r) {
+  return !!r && typeof r === "object" && !Array.isArray(r) && !r.error && !(r.result && r.result.error);
+}
+
 const INPUT_CLS = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-brand focus:ring-2 focus:ring-indigo-100";
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -3298,6 +3333,9 @@ function App() {
     // re-derived from ALL per-tool outcomes present so far — one failing tool
     // must flip it, one succeeding tool must not paper over earlier failures.
     const settle = (outcome) => {
+      if (outcome && typeof outcome === "object" && outcome.error) {
+        outcome = { ...outcome, error: formatToolError(outcome.error) };
+      }
       if (step.substepsInParent) {
         const merged = { ...(resultsRef.current[step.id] || {}), [ss.key]: outcome };
         const compErr = compositeFailure(step, merged);
@@ -3545,6 +3583,11 @@ function App() {
       else if (stepId === "consumer_access")       data = await apiPost("/api/step/consumer_access", {}, sig);
 
       abortRef.current = null;
+      // Clean any raw tool-error repr to the human message before storing/rendering.
+      if (data && typeof data === "object") {
+        if (data.error) data.error = formatToolError(data.error);
+        if (data.result && data.result.error) data.result.error = formatToolError(data.result.error);
+      }
       setResults(prev => ({ ...prev, [stepId]: data }));
       // An error-shaped result ({error} or {result:{error}}) carries no status field,
       // so it must be detected explicitly — otherwise a hard failure renders as a
@@ -3573,7 +3616,7 @@ function App() {
       return isFailed ? "error" : "done";
     } catch (err) {
       if (err.name === "AbortError") return "aborted";
-      setErrors(prev => ({ ...prev, [stepId]: err.message }));
+      setErrors(prev => ({ ...prev, [stepId]: formatToolError(err.message) }));
       setStatus(stepId, STATUS.error);
       return "error";
     }
@@ -4105,7 +4148,10 @@ function App() {
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-2 pb-1.5">{group.name}</div>
                 <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100 overflow-hidden">
                   {group.steps.map(step => {
-                    const status = statuses[step.id] || STATUS.idle;
+                    const rawStatus = statuses[step.id] || STATUS.idle;
+                    // A step whose primary path produced a result must not read Failed
+                    // because a secondary substep errored afterwards (req 7, inverted).
+                    const status = (rawStatus === STATUS.error && stepHasPrimaryResult(results[step.id])) ? STATUS.done : rawStatus;
                     const isActive = step.id === activeStep;
                     const isNew = step.num === 3 || step.num === 7;
                     const gated = step.gate || step.gateOn;
@@ -5055,7 +5101,7 @@ function App() {
                     }
                     // Parent alias: the step's Run action executes this tool.
                     if (ss.parent) {
-                      const st = statuses[activeStep];
+                      const st = (statuses[activeStep] === STATUS.error && stepHasPrimaryResult(results[activeStep])) ? STATUS.done : statuses[activeStep];
                       return (
                         <button key={ss.tool}
                           onClick={() => maybeConfirmRun(activeStep)}
@@ -5157,13 +5203,28 @@ function App() {
             </div>
             )}
 
-            {/* Error */}
-            {errors[activeStep] && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                <div className="text-xs font-semibold text-red-600 mb-1 uppercase tracking-wider">Error</div>
-                <div className="text-sm text-red-700 font-mono">{errors[activeStep]}</div>
-              </div>
-            )}
+            {/* Error. An IDMC concurrency lock or a failure after the primary path
+                already produced a result is a secondary condition (amber + retry),
+                not a step failure (red). The message is pre-cleaned at the source. */}
+            {errors[activeStep] && (() => {
+              const raw = errors[activeStep];
+              const busy = isProfilingBusy(raw);
+              const secondary = busy || stepHasPrimaryResult(results[activeStep]);
+              return (
+                <div className={`rounded-xl p-4 border ${secondary ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"}`}>
+                  <div className={`text-xs font-semibold mb-1 uppercase tracking-wider ${secondary ? "text-amber-700" : "text-red-600"}`}>
+                    {busy ? "Profiling already running" : secondary ? "Secondary action failed" : "Error"}
+                  </div>
+                  <div className={`text-sm ${secondary ? "text-amber-800" : "text-red-700 font-mono"}`}>
+                    {busy ? PROFILE_BUSY_MSG : raw}
+                  </div>
+                  <button onClick={() => maybeConfirmRun(activeStep)} disabled={anyRunning}
+                    className={`mt-2 px-3 py-1 rounded-md text-xs font-semibold border disabled:opacity-50 ${secondary ? "border-amber-400 text-amber-700 hover:bg-amber-100" : "border-red-300 text-red-600 hover:bg-red-100"}`}>
+                    Retry
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Skipped notice */}
             {statuses[activeStep] === STATUS.skipped && (() => {
@@ -5352,7 +5413,17 @@ function App() {
                       <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">{ss.tool}</div>
                       <div className="bg-slate-50 rounded-xl p-4 border border-slate-300 shadow-sm">
                         {data?.error ? (
-                          /no asset|not found|no results/i.test(String(data.error)) ? (
+                          isProfilingBusy(data.error) ? (
+                            // IDMC concurrency lock — surface one line + a manual retry,
+                            // never auto-retry (it's a lock, not a code bug).
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-2">
+                              <div><strong>Profiling already running.</strong> {PROFILE_BUSY_MSG}</div>
+                              <button onClick={() => runSubAction(active, ss)} disabled={subRunning[ss.key]}
+                                className="px-2.5 py-1 rounded-md text-xs font-semibold border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+                                {subRunning[ss.key] ? "Retrying…" : "Retry"}
+                              </button>
+                            </div>
+                          ) : /no asset|not found|no results/i.test(String(data.error)) ? (
                             // Requirement 4: resolution returning nothing says "not found
                             // in catalog", not "no results".
                             <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-600 space-y-1">
