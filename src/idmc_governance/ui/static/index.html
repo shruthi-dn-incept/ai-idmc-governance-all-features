@@ -4610,9 +4610,15 @@ function App() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  {["Hourly", "Daily", "Weekly", "Monthly"].map(p => (
-                    <button key={p} onClick={() => setScheduleForm(f => ({ ...f, interval: p }))}
-                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${scheduleForm.interval === p ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
+                  {/* Weekly/Hourly need a day-of-week selection the UI can't yet make;
+                      defaulting to every day would ship a "Weekly" label that runs
+                      daily, so they're disabled until a day-of-week picker exists.
+                      Daily and Monthly are honoured exactly. */}
+                  {[["Hourly", false], ["Daily", true], ["Weekly", false], ["Monthly", true]].map(([p, enabled]) => (
+                    <button key={p} onClick={() => enabled && setScheduleForm(f => ({ ...f, interval: p }))}
+                      disabled={!enabled}
+                      title={enabled ? undefined : "Needs a day-of-week picker (post-demo) — use Daily or Monthly"}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${!enabled ? "bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed" : scheduleForm.interval === p ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
                       {p}
                     </button>
                   ))}
