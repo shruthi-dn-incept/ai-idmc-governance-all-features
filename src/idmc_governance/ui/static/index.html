@@ -3992,7 +3992,7 @@ function App() {
     } else {
       setConfirm({ title: `Approve access for ${requester}`, subtitle: "This collection contains identifying fields.",
         consequences: [`Grants standing access to ${asset}`,
-          "Contains columns linked to identifying business terms", "Delivery target is the configured share / file / ticket"],
+          "Contains columns linked to identifying business terms", "Access is via the marketplace order — no destination is provisioned by this approval"],
         dual: true, tool: ss.tool, requester });
     }
   };
@@ -4950,7 +4950,7 @@ function App() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 font-medium mb-1.5">Delivery target</label>
+                    <label className="block text-xs text-slate-500 font-medium mb-1.5">Delivery target <span className="text-slate-400 font-normal normal-case">(records intent)</span></label>
                     <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
                       {DELIVERY_TARGETS.map(([val, label]) => (
                         <button key={val} onClick={() => setDeliveryForm(f => ({ ...f, target_type: val }))}
@@ -4959,6 +4959,10 @@ function App() {
                         </button>
                       ))}
                     </div>
+                    {/* target_type is informational only — the tool records it but never
+                        provisions a destination. Label the control as recording intent
+                        so the UI does not overclaim live delivery (spec, step 14). */}
+                    <p className="text-[11px] text-slate-400 mt-1.5">Records the intended delivery method on the marketplace object — provisioning is a separate step; nothing is delivered to a destination from here.</p>
                   </div>
                   <button onClick={() => runStep("configure_delivery")} disabled={running}
                     className="px-4 py-2 rounded-lg font-semibold text-sm bg-brand text-white hover:bg-brand-dark disabled:opacity-50 shadow-sm">
