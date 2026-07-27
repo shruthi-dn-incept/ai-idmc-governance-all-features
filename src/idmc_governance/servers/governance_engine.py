@@ -2879,13 +2879,18 @@ def _find_existing_profile(connection_federated_id: str, object_name: str) -> di
     r = _request("GET", f"{PROFILING_API_BASE}/profile")
     if r.status_code != 200:
         raise RuntimeError(f"list profiles HTTP {r.status_code}: {r.text[:300]}")
+    # create_profile stores source.name as the BARE table (it splits DB/SCHEMA/TABLE
+    # into sourcePath + name). Callers pass either a bare name (step route) or a
+    # fully-qualified DB/SCHEMA/TABLE (substep route); normalize to the bare table
+    # before matching, or the qualified form never matches what create_profile stored.
+    _, want_name = _split_object_path(object_name)
     candidates = [p for p in (r.json() or []) if p.get("connectionId") == connection_federated_id]
     for stub in candidates:
         det = _request("GET", f"{PROFILING_API_BASE}/profile/{stub['id']}")
         if det.status_code != 200:
             continue
         body = det.json() or {}
-        if (body.get("source") or {}).get("name") == object_name:
+        if (body.get("source") or {}).get("name") == want_name:
             return body
     return None
 

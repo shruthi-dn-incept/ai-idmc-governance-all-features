@@ -2549,6 +2549,20 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
   }
   const cols = data?.columns || {};
   const names = Object.keys(cols);
+  // All-bare guard (fires on ANY route): columns present but every statistic absent
+  // means the profile was submitted and stats haven't propagated yet. Show a message,
+  // never a blank statistics table. (The step route throws before storing an all-bare
+  // profile; this covers the substep route, which has no such guard.) The Warehouse
+  // path always returns stats, so this never fires there.
+  const _anyStat = names.some(n => { const st = cols[n]; return st && (st.null_pct != null || st.distinct_count != null || st.min_value != null || st.max_value != null); });
+  if (names.length > 0 && !_anyStat) {
+    const _t = data?.object_name || (sel && sel.table) || curTable || "this table";
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-700">
+        Profile submitted for <span className="font-mono font-semibold">{_t}</span>; statistics are not yet available. Re-fetch shortly (the profiling job may still be running, or catalog statistics are still propagating).
+      </div>
+    );
+  }
   const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally: direct Snowflake query"
                   : data?.profile_path === "cdgc_catalog"     ? "Informatica profiling service (read from CDGC)"
                   : "Informatica profiling service";
@@ -3536,9 +3550,14 @@ function App() {
         if (profileMode === "local") {
           data = await apiPost("/api/step/profile", { object_name: objName, mode: "local", database: dbArg, schema: schemaArg }, sig);
         } else {
+          // C3: reuse existing statistics — only execute when CDGC has none, since a
+          // needless re-run re-enters the async propagation window and yields an empty card.
+          let _pre = null;
+          try { _pre = await apiPost("/api/step/get_profile_results", { object_name: objName }, sig); } catch (e) {}
+          const _preHasStats = Object.values((_pre && _pre.columns) || {}).some(st => st && (st.null_pct != null || st.distinct_count != null || st.min_value != null || st.max_value != null));
           // Asynchronous: start the IDMC job, poll it, then read stats from CDGC.
-          const exec = await apiPost("/api/step/profile", { object_name: objName, mode: "service" }, sig);
-          const jobId = exec.profile_job_id;
+          const exec = _preHasStats ? null : await apiPost("/api/step/profile", { object_name: objName, mode: "service" }, sig);
+          const jobId = exec && exec.profile_job_id;
           if (jobId) {
             for (let i = 0; i < 40; i++) {
               if (sig.aborted) { const e = new Error("aborted"); e.name = "AbortError"; throw e; }
@@ -3555,7 +3574,7 @@ function App() {
               }
             }
           }
-          data = await apiPost("/api/step/get_profile_results", { object_name: objName }, sig);
+          data = _preHasStats ? _pre : await apiPost("/api/step/get_profile_results", { object_name: objName }, sig);
         }
         // Item 1 (correctness): reject a stale/mismatched profile rather than
         // relabeling it under the selected table. The local path echoes
