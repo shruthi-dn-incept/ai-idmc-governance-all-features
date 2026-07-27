@@ -3789,7 +3789,14 @@ def _check_uniqueness(col: str, stats: dict[str, Any], total: int,
     distinct = stats.get("distinct_count")
     if distinct is None or total <= 0:
         return None
-    duplicates = max(0, total - int(distinct))
+    # #15: count duplicates among actual (non-null) values only. distinct_count
+    # excludes nulls (SQL COUNT(DISTINCT)), so (total - distinct) would count null
+    # rows as duplicates on nullable columns and not on non-nullable ones — an
+    # inconsistent rule. Subtract nulls from the base so every column is measured
+    # the same way. Falls back to `total` when null_count is unavailable.
+    null_count = int(stats.get("null_count") or 0)
+    non_null   = max(0, total - null_count)
+    duplicates = max(0, non_null - int(distinct))
     if duplicates < int(rule.get("min_duplicate_count", 1)):
         return None
     return {
@@ -3797,8 +3804,8 @@ def _check_uniqueness(col: str, stats: dict[str, Any], total: int,
         "dimension":           rule["dimension"],
         "rule_template":       rule["rule_template"],
         "suggested_rule_name": _rule_name(prefix, col, rule["name_suffix"]),
-        "rationale":           f"{col} looks ID-like but has {duplicates} duplicate values ({distinct}/{total} distinct)",
-        "severity":            _severity_for(duplicates, total, cfg),
+        "rationale":           f"{col} looks ID-like but has {duplicates} duplicate values ({distinct} distinct of {non_null} non-null)",
+        "severity":            _severity_for(duplicates, non_null, cfg),
         "affected_rows":       duplicates,
     }
 
