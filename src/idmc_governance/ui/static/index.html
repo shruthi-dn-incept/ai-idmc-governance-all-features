@@ -121,7 +121,7 @@ const STEPS = [
       { tool: "get_job_status",           key: "get_job_status",           route: "/api/step/get_job_status",           form: "jobstatus" },
     ] },
   { id: "publish_governance", num: 10, label: "Publish to Catalog", icon: "◉", route: "/api/step/mcc_scan",
-    desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data (5000 rows) and publish real DQ scores to the Governance Catalog.",
+    desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data and publish real DQ scores to the Governance Catalog.",
     substeps: [
       { tool: "run_mcc_scan",        key: "mcc_scan",           parent: true },
       { tool: "upload_dq_scores",    key: "scores",             route: "/api/step/scores" },
@@ -452,7 +452,22 @@ function DiscoverResult({ data, onSelectSchema }) {
   );
 }
 
-function ScanResult({ data, scanSource, scanSchema }) {
+function ScanResult({ data, scanSource, scanSchema, scanTable }) {
+  // Stale-result guard (mirror of step 3): a stored scan for a different
+  // {connection, schema, table} than the current selection must not render a
+  // card that mixes a live header with stale columns. Say so and prompt a re-run.
+  const _sel = data?._selection;
+  const _curTable = (scanTable && scanTable !== "__ALL__" && scanTable !== "__ALL_SCHEMAS__") ? scanTable : "";
+  if (_sel && scanSchema && scanSchema !== "__ALL_SCHEMAS__" && (
+        String(_sel.schema || "").toLowerCase() !== String(scanSchema || "").toLowerCase() ||
+        (_sel.connection && scanSource && String(_sel.connection) !== String(scanSource)) ||
+        (_curTable && _sel.table && _sel.table !== "__ALL__" && String(_sel.table).toLowerCase() !== _curTable.toLowerCase()))) {
+    return (
+      <div className="bg-slate-50 border border-slate-300 rounded-lg p-4 text-sm text-slate-600">
+        This scan is for <span className="font-mono text-slate-700">{(_sel.connection || "?")} · {(_sel.schema || "?")}{_sel.table && _sel.table !== "__ALL__" ? " · " + _sel.table : ""}</span>, but the current selection is <span className="font-mono text-slate-700">{(scanSource || "?")} · {(scanSchema || "?")}{_curTable ? " · " + _curTable : ""}</span>. Re-run Scan to refresh.
+      </div>
+    );
+  }
   const cols = data?.columns?.[0];
   const scan = data?.scan?.result;
   if (!cols && !scan) return <JsonViewer data={data}/>;
@@ -498,7 +513,7 @@ function ScanResult({ data, scanSource, scanSchema }) {
     <div className="space-y-4">
       {/* Summary banner */}
       <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700 font-medium flex flex-wrap items-center gap-2">
-        <span>Scanned <strong>{scanned}</strong> {scanned === 1 ? "table" : "tables"}{totalInSchema > scanned ? ` of ${totalInSchema.toLocaleString()}` : ""} in <span className="font-mono">{scanSchema === "__ALL_SCHEMAS__" ? "all schemas" : (scanSchema || "schema")}</span> — <strong>{elapsed}s</strong></span>
+        <span>Scanned <strong>{scanned}</strong> {scanned === 1 ? "table" : "tables"}{totalInSchema > scanned ? ` of ${totalInSchema.toLocaleString()}` : ""} in <span className="font-mono">{scanSchema === "__ALL_SCHEMAS__" ? "all schemas" : (scanSchema || scanTables[0]?.schema || "the selected schema")}</span> — <strong>{elapsed}s</strong></span>
         {estLabel && totalInSchema > scanned && (
           <span className="text-green-600 text-xs bg-green-100 px-2 py-0.5 rounded">
             {scanSchema === "__ALL_SCHEMAS__" ? "All schemas" : "Full schema"}: {estLabel} ({totalInSchema.toLocaleString()} tables)
@@ -2560,11 +2575,11 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
               { key: "distinct", label: "Distinct", render: r => {
                   const dc = r.stats.distinct_count;
                   if (dc == null) return <span className="text-slate-400">—</span>;
-                  // Duplication only signals a defect on a column that should be
-                  // unique. Fire the badge only when the column reads as an identifier
-                  // — suppress it on code lists and low-cardinality columns, where
-                  // distinct < rows is the norm and the badge would be pure noise.
-                  const dup = totalRows && dc < totalRows && readsAs(r.stats) === "identifier";
+                  // Duplication signals a defect only on a near-unique column — a
+                  // would-be identifier with repeats. Fire on the distinct/row ratio
+                  // (>= ~0.9), not READS AS: POSITION_ID at 18/19 (0.95) gets a badge;
+                  // a code list at 4/1000 (0.004) does not.
+                  const dup = totalRows && dc < totalRows && (dc / totalRows) >= 0.9;
                   return <span className="flex items-center gap-1.5">{dc.toLocaleString ? dc.toLocaleString() : dc}{dup ? <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">dup</span> : null}</span>;
                 } },
               { key: "minmax", label: "Min / Max", render: r => <span className="font-mono text-slate-500">{String(r.stats.min_value ?? "—").slice(0, 16)} / {String(r.stats.max_value ?? "—").slice(0, 16)}</span> },
@@ -3046,6 +3061,10 @@ function App() {
   const [mccForm, setMccForm] = useState({ tables: "", schema_hint: "" });
   const [collectionForm, setCollectionForm] = useState({ category: "", collection_name: "", asset: "" });
   const [deliveryForm, setDeliveryForm] = useState({ usage_contexts: [...USAGE_CONTEXT_OPTIONS], target_type: "SNOWFLAKE" });
+  // #8: step 12's asset scores must come from the same source step 11 reads
+  // (get_dq_scores in CDGC), not just this session's monitor result — else the
+  // selector says "unscored" while step 11 shows a real composite. {name: composite|null}.
+  const [assetScores, setAssetScores] = useState({});
   // Gate 2 (curate): proposed links awaiting review — nothing written until approve
   const [curMatches, setCurMatches] = useState([]);
   const [curSelected, setCurSelected] = useState(new Set());
@@ -3092,6 +3111,22 @@ function App() {
   };
 
   useEffect(() => { fetch("/api/config").then(r => r.json()).then(setConfig).catch(() => {}); }, []);
+
+  // #8: on entering step 12, fetch each candidate asset's composite from CDGC via
+  // get_dq_scores — the same source step 11 reads — so the selector's score matches
+  // step 11 instead of reading "unscored". Fetch once per name.
+  useEffect(() => {
+    if (activeStep !== "create_collection") return;
+    const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
+    const dft = (scanTable && scanTable !== "__ALL__") ? scanTable : "";
+    const names = [...new Set([profileObject, dft, ...scanned].filter(Boolean))];
+    names.forEach(name => {
+      if (name in assetScores) return;
+      apiPost("/api/step/monitor_quality", { asset_name: name })
+        .then(d => setAssetScores(prev => (name in prev ? prev : { ...prev, [name]: (d && d.composite != null) ? d.composite : null })))
+        .catch(() => setAssetScores(prev => (name in prev ? prev : { ...prev, [name]: null })));
+    });
+  }, [activeStep]);
 
   // Rule pickers (steps 7 and 9) — load org rules + local templates on first entry.
   useEffect(() => {
@@ -3428,6 +3463,11 @@ function App() {
           table_names:            scanTableNames,
           total_tables_in_schema: totalInSchema,
         }, sig);
+        // Stamp the selection this scan is for, so the result panel can detect a
+        // stale result after the selection changes (#4, mirror of step 3's guard).
+        if (data && typeof data === "object") {
+          data._selection = { connection: scanSource || "", schema: schemaArg || "", table: isAll ? "__ALL__" : scanTable };
+        }
       }
       else if (stepId === "profile") {
         const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
@@ -4894,10 +4934,13 @@ function App() {
               const uniq = [...new Set([profileObject, defaultAsset, ...scanned].filter(Boolean))];
               const mon = results.monitor_quality || {};
               const monAsset = mon.asset || mon.asset_name || monitorForm.asset_name;
-              const assets = uniq.map(name => ({
-                name,
-                score: (monAsset && String(monAsset).toLowerCase() === String(name).toLowerCase() && mon.composite != null) ? mon.composite : null,
-              }));
+              const assets = uniq.map(name => {
+                const monMatch = (monAsset && String(monAsset).toLowerCase() === String(name).toLowerCase() && mon.composite != null) ? mon.composite : null;
+                // Prefer the CDGC score (same source as step 11) once fetched; fall
+                // back to this session's monitor result until it lands.
+                const score = (name in assetScores) ? assetScores[name] : monMatch;
+                return { name, score };
+              });
               const selected = collectionForm.asset || assets[0]?.name || "";
               const running = statuses.create_collection === STATUS.running;
               return (

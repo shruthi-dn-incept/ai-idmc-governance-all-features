@@ -4735,7 +4735,7 @@ def create_delivery_target(
 def create_consumer_access(
     consumer_email: str | None = None,
 ) -> dict[str, Any]:
-    """Step 18 — Place an order for consumer access to the published Data Collection.
+    """Step 15 — Place an order for consumer access to the published Data Collection.
 
     Places a CDMP order against the collection using the Analytics usage context
     (or first available) and the provisioned delivery target from Step 17.
@@ -4829,10 +4829,10 @@ def create_consumer_access(
 
 @mcp.tool()
 def approve_consumer_order() -> dict[str, Any]:
-    """Step 19 — Approve and fulfill the pending consumer order.
+    """Step 15 — Approve and fulfill the pending consumer order.
 
     Calls PUT api/v1/orders/{id}/approve then PUT api/v1/orders/{id}/fulfill
-    using the order placed in Step 18. Completes the full producer→consumer loop.
+    using the order placed at step 15. Completes the full producer→consumer loop.
 
     Returns: {order_id, order_ref, approve, fulfill, status, marketplace_url}
     """
@@ -4844,7 +4844,7 @@ def approve_consumer_order() -> dict[str, Any]:
     marketplace_url = access.get("marketplace_url", "")
 
     if not order_id:
-        return {"status": "failed", "error": "No order_id — run create_consumer_access (Step 18) first."}
+        return {"status": "failed", "error": "approve_consumer_order · NO_ORDER: no consumer order to approve — place one first (step 15, create_consumer_access)."}
 
     delivery_target_id = (state.get("delivery_target") or {}).get("id", "")
     _dt = state.get("delivery_template") or {}
@@ -4885,14 +4885,14 @@ def approve_consumer_order() -> dict[str, Any]:
 
 @mcp.tool()
 def verify_consumer_access() -> dict[str, Any]:
-    """Step 19 — Check the live status of the consumer order placed in Step 18."""
+    """Step 15 — Check the live status of the consumer order placed at step 15."""
     state = _load_govern_state()
     access = state.get("consumer_access") or {}
     order_id  = access.get("order_id", "")
     order_ref = access.get("order_ref", "")
     marketplace_url = access.get("marketplace_url", "")
     if not order_id:
-        return {"status": "failed", "error": "No order_id — run create_consumer_access (Step 18) first."}
+        return {"status": "failed", "error": "verify_consumer_access · NO_ORDER: no consumer order to verify — place one first (step 15, create_consumer_access)."}
     r = _cdmp_request("GET", f"api/v1/orders/{order_id}")
     if r.status_code != 200:
         return {"status": "failed", "http_status": r.status_code, "error": r.text[:300]}
@@ -4914,14 +4914,14 @@ def verify_consumer_access() -> dict[str, Any]:
 
 @mcp.tool()
 def withdraw_consumer_access() -> dict[str, Any]:
-    """Step 14 — Withdraw the consumer's access to the data collection."""
+    """Step 15 — Withdraw the consumer's access to the data collection."""
     state = _load_govern_state()
     access = state.get("consumer_access") or {}
     order_id  = access.get("order_id", "")
     order_ref = access.get("order_ref", "")
     marketplace_url = access.get("marketplace_url", "")
     if not order_id:
-        return {"status": "failed", "error": "No order_id — run create_consumer_access (Step 12) first."}
+        return {"status": "failed", "error": "withdraw_consumer_access · NO_ORDER: no consumer order to withdraw — place one first (step 15, create_consumer_access)."}
 
     # Find consumerAccess ID — the real withdraw endpoint is PUT /api/v1/consumerAccess/{id}/status
     collection_id = access.get("collection_id", "")
