@@ -64,14 +64,14 @@ const STEPS = [
       { tool: "list_connections", key: "list_connections", route: "/api/step/list_connections" },
     ] },
   { id: "scan", num: 2, label: "Scan Table", icon: "◈", route: "/api/step/scan",
-    desc: "Select a table and fetch its column metadata (cached after first run). Provenance questions — where does this table come from, what breaks if I change it — are answered here, next to the columns.",
+    desc: "Select a table and fetch its column metadata (cached after first run). Provenance questions (where does this table come from, what breaks if I change it) are answered here, next to the columns.",
     substeps: [
       { tool: "trace_lineage",          key: "trace_lineage",          route: "/api/step/trace_lineage",          form: "lineage" },
       { tool: "generate_impact_report", key: "generate_impact_report", route: "/api/step/generate_impact_report", form: "impact" },
       { tool: "find_data_source",       key: "find_data_source",       route: "/api/step/find_data_source",       form: "source" },
     ] },
   { id: "profile", num: 3, label: "Profile Data", icon: "◍", route: "/api/step/profile",
-    desc: "Measure what the data actually contains — null counts, distinct counts, min/max, top values — per column. Runs once; steps 4 and 7 read the stored profile.",
+    desc: "Measure what the data actually contains (null counts, distinct counts, min/max, top values) per column. Runs once; steps 4 and 7 read the stored profile.",
     substeps: [
       { tool: "compute_profile_from_snowflake", key: "compute_profile_from_snowflake", route: "/api/step/compute_profile_from_snowflake", form: "profileObj", label: "Warehouse query" },
       { tool: "create_profile",                 key: "create_profile",                 route: "/api/step/create_profile",                 form: "profileObj", label: "Informatica profile" },
@@ -107,10 +107,10 @@ const STEPS = [
     desc: "Creates templated DQ rule specifications and registers their rule occurrences in CDGC.",
     substeps: [
       { tool: "create_generic_dq_rules", key: "dq_rules",           parent: true },
-      { tool: "set_dq_occurrences",      key: "set_dq_occurrences", route: null, note: "Runs as part of Create rules — separate execution pending." },
+      { tool: "set_dq_occurrences",      key: "set_dq_occurrences", route: null, note: "Runs as part of Create rules, separate execution pending." },
     ] },
   { id: "schedule_execution", num: 9, label: "Schedule Execution", icon: "▸", route: "/api/step/schedule_execution",
-    desc: "CDI execution — mapping tasks bound to M_DQ_Generic, schedules, taskflows, and live job monitoring. Run Step lists the org's mapping tasks.",
+    desc: "CDI execution: mapping tasks bound to M_DQ_Generic, schedules, taskflows, and live job monitoring. Run Step lists the org's mapping tasks.",
     substeps: [
       { tool: "list_mapping_tasks",       key: "list_mapping_tasks",       parent: true },
       { tool: "create_mapping_task",      key: "create_mapping_task",      route: "/api/step/create_mapping_task",      form: "mtask" },
@@ -121,14 +121,14 @@ const STEPS = [
       { tool: "get_job_status",           key: "get_job_status",           route: "/api/step/get_job_status",           form: "jobstatus" },
     ] },
   { id: "publish_governance", num: 10, label: "Publish to Catalog", icon: "◉", route: "/api/step/mcc_scan",
-    desc: "Triggers the MCC scan — CDQ rules run on live Snowflake data and publish real DQ scores to the Governance Catalog.",
+    desc: "Triggers the MCC scan: CDQ rules run on live Snowflake data and publish real DQ scores to the Governance Catalog.",
     substeps: [
       { tool: "run_mcc_scan",        key: "mcc_scan",           parent: true },
       { tool: "upload_dq_scores",    key: "scores",             route: "/api/step/scores" },
       { tool: "propagate_dq_score",  key: "propagate_dq_score", route: "/api/step/propagate_dq_score", form: "propagate" },
     ] },
   { id: "monitor_quality", num: 11, label: "Monitor Quality", icon: "◔", route: "/api/step/monitor_quality",
-    desc: "Scorecards, trends, degradation alerts and remediation guidance. Entered cold — the asset selector needs no upstream run.",
+    desc: "Scorecards, trends, degradation alerts and remediation guidance. Entered cold. The asset selector needs no upstream run.",
     substeps: [
       { tool: "get_dq_scores",         key: "monitor_quality",       parent: true },
       { tool: "check_score_trends",    key: "check_score_trends",    route: "/api/step/check_score_trends",    form: "trends" },
@@ -160,7 +160,7 @@ const STEPS = [
     ] },
   { id: "consumer_access", num: 15, label: "Consumer Access", icon: "✓", route: "/api/step/consumer_access",
     gateOn: ["approve_consumer_order", "withdraw_consumer_access"],
-    desc: "Place, approve, verify and withdraw consumer access. Approve and withdraw are gated — an authorisation decision and an irreversible one.",
+    desc: "Place, approve, verify and withdraw consumer access. Approve and withdraw are gated: an authorisation decision and an irreversible one.",
     substeps: [
       { tool: "create_consumer_access",   key: "consumer_access", parent: true },
       { tool: "approve_consumer_order",   key: "approve_order",   route: "/api/step/approve_order",   gated: "approve" },
@@ -232,7 +232,7 @@ function compositeFailure(stepDef, data) {
   const keys = (stepDef?.substeps || []).map(ss => ss.key);
   const failed = keys.filter(k => toolOutcomeFailed(data?.[k]));
   if (!failed.length) return null;
-  return `${failed.length} of ${keys.length} tools failed: ${failed.join(", ")} — the rows below carry the detail`;
+  return `${failed.length} of ${keys.length} tools failed: ${failed.join(", ")}. The rows below carry the detail`;
 }
 
 // Tool errors arrive as the raw MCP repr:
@@ -260,7 +260,7 @@ function formatToolError(raw) {
 // currently running"), not a code bug — surfaced with its own line + manual retry,
 // never auto-retried.
 const PROFILE_BUSY_CODE = "PROFILE_SVC_00047";
-const PROFILE_BUSY_MSG  = "A profiling run for this table is already in progress — wait for it to finish, or use Warehouse query.";
+const PROFILE_BUSY_MSG  = "A profiling run for this table is already in progress. Wait for it to finish, or use Warehouse query.";
 function isProfilingBusy(raw) { return String(raw || "").includes(PROFILE_BUSY_CODE); }
 
 // A step whose primary path produced a real result must not read Failed just
@@ -425,7 +425,7 @@ function DiscoverResult({ data, onSelectSchema }) {
                                   <button
                                     onClick={(e) => { e.stopPropagation(); onSelectSchema(cs.source, s.schema); }}
                                     className="text-xs px-2 py-0.5 rounded border border-indigo-300 bg-white text-indigo-600 font-medium hover:bg-indigo-50 transition-colors"
-                                    title="Scan this schema — sets it on step 2 and jumps there"
+                                    title="Scan this schema, sets it on step 2 and jumps there"
                                   >Select →</button>
                                 )}
                                 <button onClick={() => toggle(sKey)} className="text-slate-400 text-xs">{sOpen ? "▾" : "▸"}</button>
@@ -612,13 +612,13 @@ function EstimateBanner({ data }) {
     return (
       <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700 font-medium flex flex-wrap items-center gap-2">
         <span>Completed in <strong>{elapsed}s</strong></span>
-        <span className="text-green-600 text-xs bg-green-100 px-2 py-0.5 rounded">One-time step — does not scale with table count</span>
+        <span className="text-green-600 text-xs bg-green-100 px-2 py-0.5 rounded">One-time step, does not scale with table count</span>
       </div>
     );
   }
   return (
     <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700 font-medium flex flex-wrap items-center gap-2">
-      <span>Processed <strong>{sample}</strong> {sample === 1 ? "table" : "tables"}{total > sample ? ` of ${total.toLocaleString()}` : ""} — <strong>{elapsed}s</strong></span>
+      <span>Processed <strong>{sample}</strong> {sample === 1 ? "table" : "tables"}{total > sample ? ` of ${total.toLocaleString()}` : ""} in <strong>{elapsed}s</strong></span>
       {estLabel && total > sample && (
         <span className="text-green-600 text-xs bg-green-100 px-2 py-0.5 rounded">Full schema: {estLabel} ({total.toLocaleString()} tables)</span>
       )}
@@ -689,7 +689,7 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
   if (errMsg) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <div className="text-xs text-red-600 font-medium mb-1 uppercase tracking-wider">Step failed — nothing written to CDGC</div>
+        <div className="text-xs text-red-600 font-medium mb-1 uppercase tracking-wider">Step failed: nothing written to CDGC</div>
         <div className="text-sm text-red-700 font-mono">{errMsg}</div>
       </div>
     );
@@ -757,7 +757,7 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
             {errors.map((e, i) => (
               <div key={i} className="text-xs">
                 <span className="text-red-500 font-medium">{e.type}: {e.name}</span>
-                <span className="text-red-400 ml-2">— {e.error}</span>
+                <span className="text-red-400 ml-2">{e.error}</span>
               </div>
             ))}
           </div>
@@ -1019,7 +1019,7 @@ function CurateResult({ data }) {
           </div>
         )}
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">
-          Only the approved links were written — deselected columns stay unlinked. {data.note || ""}
+          Only the approved links were written; deselected columns stay unlinked. {data.note || ""}
         </div>
       </div>
     );
@@ -1138,7 +1138,7 @@ function ScoresResult({ data }) {
           onClick={() => setOpen(o => !o)}
           className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
         >
-          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Rule Occurrences (DQROs) — {ok} pushed</span>
+          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Rule Occurrences (DQROs): {ok} pushed</span>
           <span className="text-slate-400 text-sm">{open ? "▲" : "▼"}</span>
         </button>
         {open && (
@@ -1174,7 +1174,7 @@ function ScoresResult({ data }) {
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-3">
         <span className="text-2xl">⏱</span>
         <div>
-          <div className="text-sm font-semibold text-amber-800">Interim scores live — run MCC Scan next</div>
+          <div className="text-sm font-semibold text-amber-800">Interim scores live. Run MCC Scan next</div>
           <div className="text-xs text-amber-600">95% placeholder scores uploaded. Proceed to Step 9 to trigger the real CDQ run.</div>
         </div>
       </div>
@@ -1381,7 +1381,7 @@ function UploadBadge({ upload, label }) {
   const text     = uploaded
     ? `✓ Uploaded via API (HTTP ${upload.http_status})`
     : saved
-      ? `📁 Saved locally — import via CDMP UI`
+      ? `📁 Saved locally: import via CDMP UI`
       : `✗ ${upload.status} (HTTP ${upload.http_status || "—"})`;
   return (
     <div className="flex items-start gap-2">
@@ -1624,7 +1624,7 @@ function ConsumerAccessResult({ data, onAccessAction }) {
           <span className="text-xl">⚡</span>
           <div>
             <div className="text-sm font-semibold text-emerald-800">Auto-approved by ClaireBot</div>
-            <div className="text-xs text-emerald-600 mt-0.5">Order placed and automatically approved — no manual intervention needed. Access granted.</div>
+            <div className="text-xs text-emerald-600 mt-0.5">Order placed and automatically approved, no manual intervention needed. Access granted.</div>
           </div>
         </div>
       )}
@@ -1716,7 +1716,7 @@ function VerifyAccessResult({ data }) {
         <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center gap-3">
           <span className="text-xl">🎉</span>
           <div>
-            <div className="text-sm font-semibold text-emerald-800">Access granted — pipeline complete!</div>
+            <div className="text-sm font-semibold text-emerald-800">Access granted. Pipeline complete!</div>
             <div className="text-xs text-emerald-600">Order fulfilled. Full producer → governed → marketplace → consumer loop done.</div>
           </div>
         </div>
@@ -1725,7 +1725,7 @@ function VerifyAccessResult({ data }) {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
           <span className="text-xl">✅</span>
           <div>
-            <div className="text-sm font-semibold text-blue-800">Approved — awaiting fulfillment</div>
+            <div className="text-sm font-semibold text-blue-800">Approved, awaiting fulfillment</div>
             <div className="text-xs text-blue-700">Order approved. The delivery owner must now click <strong>Fulfill</strong> in the Marketplace to complete access.</div>
           </div>
         </div>
@@ -1881,7 +1881,7 @@ function PublishGovernanceResult({ data }) {
           <span className="text-xs font-mono text-slate-600 break-all">{jobId}</span>
         </div>
       )}
-      {ok && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ MCC scan triggered — real DQ scores will publish to the Governance Catalog</div>}
+      {ok && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ MCC scan triggered: real DQ scores will publish to the Governance Catalog</div>}
       {!ok && (r.trigger_error || r.note) && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
           <div className="text-xs font-semibold text-amber-800 mb-1">Why the scan didn't run</div>
@@ -2080,7 +2080,7 @@ function LineageEmptyState({ assetName }) {
         <div className="text-xs text-slate-500 mt-1 leading-relaxed">
           Two possible causes, needing different fixes: <strong>Relationship Discovery has not run</strong> on
           this catalog source (enable and run it in Metadata Command Center), or it has run and
-          <strong> no CDI mappings touch this asset</strong> — there is no dataflow to derive. Lineage comes from
+          <strong> no CDI mappings touch this asset</strong>, so there is no dataflow to derive. Lineage comes from
           the upfront catalog scan; nothing on this ladder produces it. Demo against an asset with real lineage.
         </div>
       </div>
@@ -2159,7 +2159,7 @@ function SuggestTermsResult({ data }) {
   const suggestions = data?.suggestions || [];
   if (!suggestions.length) return (
     <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">
-      {data?.note || "No columns found to derive terms from — the asset may not be cataloged, or exposes no column metadata. Scan it first, then retry."}
+      {data?.note || "No columns found to derive terms from. The asset may not be cataloged, or exposes no column metadata. Scan it first, then retry."}
     </div>
   );
   return (
@@ -2180,7 +2180,7 @@ function SuggestTermsResult({ data }) {
           </div>
         ))}
       </div>
-      <div className="text-xs text-slate-400">To write one of these to CDGC, copy it into the create_glossary_term fields above — creation stays an explicit act, not a side effect of suggesting.</div>
+      <div className="text-xs text-slate-400">To write one of these to CDGC, copy it into the create_glossary_term fields above. Creation stays an explicit act, not a side effect of suggesting.</div>
     </div>
   );
 }
@@ -2188,7 +2188,7 @@ function SuggestTermsResult({ data }) {
 function CreateTermResult({ data }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
-      <div>✓ <strong>{data?.name}</strong> created in CDGC — id <span className="font-mono">{data?.id || "?"}</span></div>
+      <div>✓ <strong>{data?.name}</strong> created in CDGC, id <span className="font-mono">{data?.id || "?"}</span></div>
       {data?.category && <div className="text-emerald-700">parent: {data.category}</div>}
       {(data?.synonyms || []).length > 0 && <div className="text-emerald-700">synonyms: {data.synonyms.join(", ")}</div>}
     </div>
@@ -2207,7 +2207,7 @@ function GlossaryHealthResult({ data }) {
       </div>
       {dup.length > 0 && (
         <div className="border border-red-200 rounded-xl bg-white overflow-hidden">
-          <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs font-semibold text-red-600 uppercase tracking-wider">Duplicate names — merge candidates</div>
+          <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-xs font-semibold text-red-600 uppercase tracking-wider">Duplicate names: merge candidates</div>
           <div className="divide-y divide-slate-50">
             {dup.map((d, i) => (
               <div key={i} className="px-4 py-2 flex items-center gap-3">
@@ -2220,7 +2220,7 @@ function GlossaryHealthResult({ data }) {
       )}
       {orp.length > 0 && (
         <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-          <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Orphaned terms — no relationships (first 50 terms checked)</div>
+          <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Orphaned terms: no relationships (first 50 terms checked)</div>
           <div className="p-3 flex flex-wrap gap-1.5">
             {orp.map((o, i) => <span key={i} className="text-xs bg-slate-100 border border-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">{o.name}</span>)}
           </div>
@@ -2240,7 +2240,7 @@ function GlossaryHealthResult({ data }) {
         </div>
       )}
       {!dup.length && !orp.length && !gaps.length && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm font-semibold text-emerald-800">✓ Glossary is healthy — no duplicates, orphans or definition gaps in the scanned sample.</div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm font-semibold text-emerald-800">✓ Glossary is healthy: no duplicates, orphans or definition gaps in the scanned sample.</div>
       )}
     </div>
   );
@@ -2284,9 +2284,9 @@ function ScorecardResult({ data }) {
         <div className="bg-slate-50 border border-slate-300 rounded-xl p-5 flex items-start gap-3">
           <span className="text-2xl">⏱</span>
           <div>
-            <div className="text-sm font-semibold text-slate-700">No scores on this asset yet — possibly awaiting catalog rollup</div>
+            <div className="text-sm font-semibold text-slate-700">No scores on this asset yet: possibly awaiting catalog rollup</div>
             <div className="text-xs text-slate-500 mt-1 leading-relaxed">
-              CDGC rolls uploaded scores into the asset scorecard asynchronously — a score published at step 10
+              CDGC rolls uploaded scores into the asset scorecard asynchronously: a score published at step 10
               moments ago may not appear yet. Re-check in a few minutes. Otherwise verify rule occurrences are
               registered against this asset (step 8).
             </div>
@@ -2396,7 +2396,7 @@ function TrendsResult({ data }) {
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
       <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend — last {data?.lookback_days} days · ±{data?.threshold} pt degradation</span>
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Score trend: last {data?.lookback_days} days · ±{data?.threshold} pt degradation</span>
         <div className="flex gap-3 text-xs">
           <span className="text-red-600 font-semibold">{(data?.degrading || []).length} degrading</span>
           <span className="text-emerald-600 font-semibold">{(data?.improving || []).length} improving</span>
@@ -2415,7 +2415,7 @@ function TrendsResult({ data }) {
           <TrendChart series={series} floor={floor}/>
           {breached.length
             ? <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-800">
-                {breached.length} rule{breached.length > 1 ? "s" : ""} below the {floor}% floor — <span className="font-mono">{breached[0].rule}</span> crossed on {new Date(Date.parse(breached[0].cross)).toISOString().slice(0, 10)} and has not recovered (now {breached[0].last.toFixed(0)}%).
+                {breached.length} rule{breached.length > 1 ? "s" : ""} below the {floor}% floor. <span className="font-mono">{breached[0].rule}</span> crossed on {new Date(Date.parse(breached[0].cross)).toISOString().slice(0, 10)} and has not recovered (now {breached[0].last.toFixed(0)}%).
               </div>
             : <div className="text-xs text-slate-400 px-1">All plotted rules stay at or above the {floor}% floor.</div>}
           {series.some(s => s.points.length === 2) && (
@@ -2443,7 +2443,7 @@ function RemediationResult({ data, onGoToStep }) {
         <SummaryCard label="Exceptions" value={data?.summary?.total_exceptions ?? 0} color="text-slate-600"/>
       </div>
       {seeds.length === 0
-        ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ All rules healthy — nothing to remediate.</div>
+        ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ All rules healthy: nothing to remediate.</div>
         : (
           <div className="border border-slate-200 rounded-xl bg-white divide-y divide-slate-100 overflow-hidden">
             {seeds.map((s, i) => (
@@ -2495,7 +2495,7 @@ function AlertResult({ data, monitorContext }) {
       {/* Informational, not a warning — and be precise about where the alert lives */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-700">
         Threshold is stored by <strong>this platform</strong> ({data?.total_alerts} alert{data?.total_alerts === 1 ? "" : "s"} configured) and evaluated by our
-        scheduler — CDGC exposes no alert-registration API. If asked where the alert lives, this is the answer.
+        scheduler. CDGC exposes no alert-registration API. If asked where the alert lives, this is the answer.
       </div>
     </div>
   );
@@ -2525,7 +2525,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
   }
   const cols = data?.columns || {};
   const names = Object.keys(cols);
-  const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally — direct Snowflake query"
+  const pathLabel = data?.profile_path === "snowflake_direct" ? "Computed locally: direct Snowflake query"
                   : data?.profile_path === "cdgc_catalog"     ? "Informatica profiling service (read from CDGC)"
                   : "Informatica profiling service";
   const totalRows = Number(data?.total_rows) || 0;
@@ -2545,7 +2545,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
     <div className="space-y-3">
       {data?._cached && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700 font-medium">
-          Profiled {data._saved_at ? `at ${data._saved_at}` : "earlier this session"} — cached, not re-executed. Run Step to refresh.
+          Profiled {data._saved_at ? `at ${data._saved_at}` : "earlier this session"}. Cached, not re-executed. Run Step to refresh.
         </div>
       )}
       {/* Single Profile results card (not one panel per substep) */}
@@ -2589,7 +2589,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
           />
         ) : (
           <div className="p-4 text-xs text-slate-500">
-            No column statistics returned — the connector may not enumerate columns through the profiling
+            No column statistics returned: the connector may not enumerate columns through the profiling
             service, or CDGC hasn't ingested the run yet (statistics propagate a few minutes after the job).
             "Warehouse query" queries Snowflake directly and returns immediately.
           </div>
@@ -2614,7 +2614,7 @@ function RecommendRulesResult({ data }) {
         <SummaryCard label="Approved for step 8" value={approved.length} color="text-emerald-600"/>
       </div>
       {approved.length === 0
-        ? <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">Nothing approved — re-run the step to reopen the review gate.</div>
+        ? <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 text-xs text-slate-500">Nothing approved: re-run the step to reopen the review gate.</div>
         : (
           <div className="border border-slate-200 rounded-xl bg-white divide-y divide-slate-100 overflow-hidden">
             {approved.map((r, i) => (
@@ -2629,7 +2629,7 @@ function RecommendRulesResult({ data }) {
           </div>
         )}
       <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-700">
-        Approved selection is carried into Create DQ Rules (step 8) — one approval record covers everything written.
+        Approved selection is carried into Create DQ Rules (step 8): one approval record covers everything written.
       </div>
     </div>
   );
@@ -2655,7 +2655,7 @@ function RuleSpecsResult({ data }) {
       />
       {templates.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Template library — local JSON, not org objects</div>
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Template library: local JSON, not org objects</div>
           <div className="flex flex-wrap gap-2">
             {templates.map(t => (
               <span key={t.file} className="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-lg">
@@ -2672,16 +2672,16 @@ function RuleSpecsResult({ data }) {
 function CreateRuleResult({ data }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
-      <div>✓ Rule <strong>{data?.name}</strong> created — state <span className="font-mono">{data?.documentState}</span> · dimension {data?.dimension}</div>
+      <div>✓ Rule <strong>{data?.name}</strong> created, state <span className="font-mono">{data?.documentState}</span> · dimension {data?.dimension}</div>
       {data?.ui_url && <a href={data.ui_url} target="_blank" rel="noreferrer" className="text-brand underline">Open in CDQ ↗</a>}
-      <div className="text-emerald-700">Added to the step 7 selection — it is approved with the rest.</div>
+      <div className="text-emerald-700">Added to the step 7 selection; it is approved with the rest.</div>
     </div>
   );
 }
 
 function ValidateRuleResult({ data }) {
   return data?.valid
-    ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ Rule logic is valid — safe to deploy</div>
+    ? <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm font-semibold text-emerald-800">✓ Rule logic is valid: safe to deploy</div>
     : (
       <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
         <div className="text-sm font-semibold text-red-700">✗ Validation failed</div>
@@ -2725,7 +2725,7 @@ function MappingTasksResult({ data }) {
           { key: "updateTime", label: "Updated" },
         ]}
         rows={data?.tasks || []}
-        empty={<div className="text-xs text-slate-400 italic p-3">No mapping tasks in this org yet — create one below.</div>}
+        empty={<div className="text-xs text-slate-400 italic p-3">No mapping tasks in this org yet: create one below.</div>}
       />
     </div>
   );
@@ -2734,7 +2734,7 @@ function MappingTasksResult({ data }) {
 function GeneratedTaskResult({ data }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
-      ✓ Task <strong>{data?.name}</strong> created (id <span className="font-mono">{data?.id}</span>) —
+      ✓ Task <strong>{data?.name}</strong> created (id <span className="font-mono">{data?.id}</span>),
       bound: {(data?.parameter_names || []).join(", ") || "template defaults"}
     </div>
   );
@@ -2743,7 +2743,7 @@ function GeneratedTaskResult({ data }) {
 function ScheduleCreatedResult({ data }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
-      <div>✓ Schedule <strong>{data?.name}</strong> — {data?.interval}{data?.frequency ? ` (every ${data.frequency})` : ""}</div>
+      <div>✓ Schedule <strong>{data?.name}</strong>: {data?.interval}{data?.frequency ? ` (every ${data.frequency})` : ""}</div>
       <div className="font-mono text-emerald-700">id {data?.id} · first run {data?.startTime}</div>
       <div className="text-emerald-600">Attach it to a mapping task, or reference it from a taskflow.</div>
     </div>
@@ -2753,7 +2753,7 @@ function ScheduleCreatedResult({ data }) {
 function TaskflowCreatedResult({ data }) {
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
-      ✓ Taskflow <strong>{data?.name}</strong> created — {data?.taskCount} task{data?.taskCount === 1 ? "" : "s"}, id <span className="font-mono">{data?.id}</span>
+      ✓ Taskflow <strong>{data?.name}</strong> created: {data?.taskCount} task{data?.taskCount === 1 ? "" : "s"}, id <span className="font-mono">{data?.id}</span>
     </div>
   );
 }
@@ -2761,7 +2761,7 @@ function TaskflowCreatedResult({ data }) {
 function RunTaskResult({ data }) {
   return (
     <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-700">
-      ▶ Run <span className="font-mono font-semibold">{data?.runId}</span> triggered for <strong>{data?.taskName || data?.taskId}</strong> — live status in the Job runs panel below.
+      ▶ Run <span className="font-mono font-semibold">{data?.runId}</span> triggered for <strong>{data?.taskName || data?.taskId}</strong>. Live status in the Job runs panel below.
     </div>
   );
 }
@@ -2878,8 +2878,8 @@ function SessionExpiredBanner({ message, onDismiss }) {
     <div className="bg-red-50 border-b border-red-200 px-6 py-2.5 flex items-center gap-3 shrink-0">
       <span className="text-lg">⚠️</span>
       <div className="flex-1">
-        <span className="text-sm font-semibold text-red-800">IDMC session expired — </span>
-        <span className="text-xs text-red-700">reconnect (run scripts/refresh-session.sh or re-login), then re-run the action. The servers re-mint tokens on their next call.</span>
+        <span className="text-sm font-semibold text-red-800">IDMC session expired.</span>
+        <span className="text-xs text-red-700">Reconnect (run scripts/refresh-session.sh or re-login), then re-run the action. The servers re-mint tokens on their next call.</span>
       </div>
       <button onClick={onDismiss} className="text-xs px-3 py-1 rounded-lg border border-red-300 text-red-600 font-semibold bg-white hover:bg-red-100">Dismiss</button>
     </div>
@@ -2922,12 +2922,12 @@ function HealthIndicator() {
   const total = health.total || servers.length || 6;
   const dotCls = (s) => s.state === "down" ? "bg-red-500 pulse"
                       : busy.includes(s.server) ? "bg-amber-400 pulse" : "bg-emerald-500";
-  const title = servers.map(s => `${s.server || "server"}: ${s.state || "?"}${busy.includes(s.server) ? " (busy)" : ""}${s.error ? " — " + s.error : ""}`).join("\n");
+  const title = servers.map(s => `${s.server || "server"}: ${s.state || "?"}${busy.includes(s.server) ? " (busy)" : ""}${s.error ? ": " + s.error : ""}`).join("\n");
   return (
     <div className="flex items-center gap-1.5" title={title}>
       {servers.map((s, i) => <span key={i} className={`w-2 h-2 rounded-full inline-block ${dotCls(s)}`}/>)}
       <span className={`text-xs font-medium ml-1 ${online < total ? "text-red-500 font-semibold" : "text-slate-500"}`}>
-        {online} of {total} online{(health.down && health.down.length) ? ` — ${health.down.join(", ")} down` : busy.length ? ` — ${busy.join(", ")} busy` : ""}
+        {online} of {total} online{(health.down && health.down.length) ? `: ${health.down.join(", ")} down` : busy.length ? `: ${busy.join(", ")} busy` : ""}
       </span>
     </div>
   );
@@ -2954,7 +2954,7 @@ function SessionTimer() {
 // clicking through fifteen steps (spec: The shell / sidebar).
 function stepStatusLine(step, status, results) {
   if (status === STATUS.skipped) return "Skipped by steward";
-  if (status === STATUS.error)   return "Failed — open to retry";
+  if (status === STATUS.error)   return "Failed - open to retry";
   if (status === STATUS.running) return step.gate ? "Awaiting steward review" : "Running…";
   if (status === STATUS.done) {
     const r = results[step.id] || {};
@@ -3395,7 +3395,7 @@ function App() {
       if (ss.key === "create_dq_rules" && data?.id) {
         setRecItems(prev => prev.length
           ? [...prev, { type: data.dimension || ruleForm.dimension, name: data.name,
-                        subtitle: "authored manually — already in CDQ (" + (data.documentState || "?") + ")" }]
+                        subtitle: "authored manually, already in CDQ (" + (data.documentState || "?") + ")" }]
           : prev);
         setRecSelected(prev => { const n = new Set(prev); n.add(data.name); return n; });
       }
@@ -3472,7 +3472,7 @@ function App() {
       else if (stepId === "profile") {
         const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
         const objName = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || scanned[0] || "";
-        if (!objName) throw new Error("Pick a table to profile — scan one first, or type a name above.");
+        if (!objName) throw new Error("Pick a table to profile: scan one first, or type a name above.");
         // The step-3 card's effect prefills profileSchema/profileDatabase from the
         // discover grouping; read that state (fallback to scanSchema) and carry the
         // {database, schema, table} triple — the fix for the wrong-schema failure.
@@ -3513,7 +3513,7 @@ function App() {
         // another table's statistics (the 242-distinct-over-240-rows bug).
         const returnedId = String(data?.source?.object || data?.asset?.name || "").trim();
         if (returnedId && objName && returnedId.toLowerCase() !== objName.toLowerCase()) {
-          throw new Error(`Profiling returned results for "${returnedId}", not "${objName}" — the run for `
+          throw new Error(`Profiling returned results for "${returnedId}", not "${objName}". The run for `
             + `this table did not complete. Nothing was stored; re-run Profile Data.`);
         }
         // #2: a profile with column names but no statistics is empty — do not
@@ -3523,7 +3523,7 @@ function App() {
         const _cols = data?.columns || {};
         const _hasStats = Object.values(_cols).some(st => st && (st.null_pct != null || st.distinct_count != null || st.min_value != null || st.max_value != null));
         if (!_hasStats) {
-          throw new Error(`Profiling returned ${Object.keys(_cols).length} column(s) but no statistics for "${objName}" — nothing stored, existing profile kept. Statistics may still be propagating (retry shortly), or the connector can't enumerate them via the service path — use Warehouse query.`);
+          throw new Error(`Profiling returned ${Object.keys(_cols).length} column(s) but no statistics for "${objName}": nothing stored, existing profile kept. Statistics may still be propagating (retry shortly), or the connector can't enumerate them via the service path. Use Warehouse query.`);
         }
         data.object_name = objName;
         // Tag with the selection triple so the panel is never rendered for a
@@ -3619,7 +3619,7 @@ function App() {
       else if (stepId === "publish_governance")    data = await apiPost("/api/step/mcc_scan", {}, sig);
       else if (stepId === "monitor_quality") {
         // Entered cold by design — the selector inherits nothing.
-        if (!monitorForm.asset_name) throw new Error("Enter an asset name above — Monitor Quality inherits no upstream selection.");
+        if (!monitorForm.asset_name) throw new Error("Enter an asset name above. Monitor Quality inherits no upstream selection.");
         data = await apiPost("/api/step/monitor_quality", { asset_name: monitorForm.asset_name }, sig);
       }
       else if (stepId === "create_collection") {
@@ -3664,7 +3664,7 @@ function App() {
         const r = data?.rules;
         const ruleErrs = r?.errors || [];
         const createdCount = (r?.rules_created || []).length + (r?.occurrences_registered || []).length;
-        if (!r) { isFailed = true; errMsg = "create_generic_dq_rules did not run — the plan returned no rule action"; }
+        if (!r) { isFailed = true; errMsg = "create_generic_dq_rules did not run: the plan returned no rule action"; }
         else if (ruleErrs.length > 0 && createdCount === 0) { isFailed = true; errMsg = `rule creation failed for every column (${ruleErrs.length} errors)`; }
       }
       if (errMsg) setErrors(prev => ({ ...prev, [stepId]: errMsg }));
@@ -3691,7 +3691,7 @@ function App() {
 
   const stopRunAll = useCallback(() => {
     runAllRef.current = false;
-    setRunAll(r => r ? { ...r, running: false, note: "stopped — the current step finishes, nothing further runs" } : r);
+    setRunAll(r => r ? { ...r, running: false, note: "stopped: the current step finishes, nothing further runs" } : r);
   }, []);
 
   const startRunAll = useCallback(async () => {
@@ -3735,7 +3735,7 @@ function App() {
             if (c12) setErrors(prev => ({ ...prev, create_collection: c12 }));
             const pubFail = toolOutcomeFailed(full.publish);
             setStatuses(prev => ({ ...prev, publish_marketplace: pubFail ? STATUS.error : STATUS.done }));
-            if (c12 || pubFail) return halt(step.id, "marketplace span reported failures — the rows carry the detail");
+            if (c12 || pubFail) return halt(step.id, "marketplace span reported failures: the rows carry the detail");
           } catch (e) {
             setErrors(prev => ({ ...prev, create_collection: e.message }));
             setStatuses(prev => ({ ...prev, create_collection: STATUS.error }));
@@ -3746,15 +3746,15 @@ function App() {
 
         const outcome = await runStep(step.id);
         if (outcome === "gate") {
-          return halt(step.id, "review gate open — approve (or adjust the selection), then press Run all to continue");
+          return halt(step.id, "review gate open: approve (or adjust the selection), then press Run all to continue");
         }
         if (outcome === "error" || outcome === "aborted") {
-          return halt(step.id, outcome === "aborted" ? "stopped" : "step failed — see its error panel");
+          return halt(step.id, outcome === "aborted" ? "stopped" : "step failed: see its error panel");
         }
         if (step.id === "consumer_access") {
           // Gates 4/5 are human decisions. The run never clicks through them
           // and never calls auto_approve_access.
-          return halt(step.id, "order placed — approve and withdraw are gated human actions (Gates 4 and 5)");
+          return halt(step.id, "order placed: approve and withdraw are gated human actions (Gates 4 and 5)");
         }
       }
       runAllRef.current = false;
@@ -3777,7 +3777,7 @@ function App() {
       const out = await apiPost("/api/step/apply_curation_links", { links });
       setResults(prev => ({ ...prev, curate: { applied: out, matches_reviewed: curMatches.length, approved_count: links.length } }));
       const totalFail = (out.errors || []).length > 0 && (out.linked || 0) === 0;
-      if ((out.errors || []).length) setErrors(prev => ({ ...prev, curate: `${out.errors.length} link(s) failed — detail in the result` }));
+      if ((out.errors || []).length) setErrors(prev => ({ ...prev, curate: `${out.errors.length} link(s) failed: detail in the result` }));
       setStatus("curate", totalFail ? STATUS.error : STATUS.done);
       setCurMatches([]);
     } catch (e) {
@@ -4022,7 +4022,7 @@ function App() {
       subtitle: "Runs the DQ rules against live data and writes scores.",
       consequences: ["Executes the DQ rules against the selected asset on live Snowflake data",
         "Writes quality scores to the governance catalog", "Visible to every consumer of this asset",
-        "Cannot be retracted — only superseded by a later run"], confirmLabel: "Publish" },
+        "Cannot be retracted, only superseded by a later run"], confirmLabel: "Publish" },
     publish_marketplace: { title: "Publish collection to the marketplace",
       subtitle: "The collection becomes discoverable by consumers.",
       consequences: ["Visible to every marketplace consumer in this org",
@@ -4041,14 +4041,14 @@ function App() {
     const requester = order.consumer || "the requesting consumer";
     const asset = order.collection_id ? `collection ${String(order.collection_id).slice(0, 8)}…` : "the published collection";
     if (ss.gated === "withdraw") {
-      setConfirm({ title: `Withdraw access — ${requester}`, subtitle: "Destructive and irreversible from the UI.",
+      setConfirm({ title: `Withdraw access: ${requester}`, subtitle: "Destructive and irreversible from the UI.",
         consequences: [`${requester} loses access to ${asset} immediately`,
           "Queries running against this grant will fail", "Restoring requires a new request and a fresh approval"],
         confirmLabel: "Withdraw access", danger: true, tool: ss.tool, onConfirm: () => runSubAction(active, ss) });
     } else {
       setConfirm({ title: `Approve access for ${requester}`, subtitle: "This collection contains identifying fields.",
         consequences: [`Grants standing access to ${asset}`,
-          "Contains columns linked to identifying business terms", "Access is via the marketplace order — no destination is provisioned by this approval"],
+          "Contains columns linked to identifying business terms", "Access is via the marketplace order; no destination is provisioned by this approval"],
         dual: true, tool: ss.tool, requester });
     }
   };
@@ -4080,7 +4080,7 @@ function App() {
           <button
             onClick={() => setSettingsOpen(true)}
             className="text-slate-400 hover:text-brand text-lg leading-none pl-2 border-l border-slate-200 transition-colors"
-            title="Settings — org-scoped actions (export / import, approval policy)"
+            title="Settings: org-scoped actions (export / import, approval policy)"
           >⚙</button>
         </div>
       </header>
@@ -4097,7 +4097,7 @@ function App() {
             {runAll.running
               ? `Run-all: at ${(STEPS.find(s => s.id === runAll.at) || {}).label || "…"}`
               : runAll.halted
-                ? `Run-all halted at ${(STEPS.find(s => s.id === runAll.halted) || {}).label || runAll.halted} — ${runAll.note}`
+                ? `Run-all halted at ${(STEPS.find(s => s.id === runAll.halted) || {}).label || runAll.halted}: ${runAll.note}`
                 : `Run-all: ${runAll.note}`}
           </span>
           {!runAll.running && (
@@ -4117,14 +4117,14 @@ function App() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-sm font-bold text-slate-800">Settings</div>
-                <div className="text-xs text-slate-400 mt-0.5">Org-scoped actions — independent of the dataset in flight</div>
+                <div className="text-xs text-slate-400 mt-0.5">Org-scoped actions, independent of the dataset in flight</div>
               </div>
               <button onClick={() => setSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 text-sm">✕</button>
             </div>
             <div className="bg-slate-50 border border-slate-300 rounded-xl p-4 space-y-3">
               <div className="text-xs font-semibold text-slate-600">Export / Import</div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Asset bundles promoted between environments — org scope, not the table in flight.
+                Asset bundles promoted between environments: org scope, not the table in flight.
                 Both are fire-then-poll; export delivers a downloadable ZIP.
               </p>
               <div>
@@ -4149,7 +4149,7 @@ function App() {
               {expErr && <div className="bg-red-50 border border-red-200 rounded-lg p-2"><pre className="text-xs text-red-700 whitespace-pre-wrap">{expErr}</pre></div>}
               {expOut && (
                 <div className={`rounded-lg p-2.5 text-xs space-y-1 border ${expOut.package_path ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-slate-100 border-slate-300 text-slate-600"}`}>
-                  <div>Job <span className="font-mono">{expOut.job_id}</span> — {expOut.state}{expOut.package_bytes ? ` · ${(expOut.package_bytes / 1024).toFixed(1)} KB` : ""}</div>
+                  <div>Job <span className="font-mono">{expOut.job_id}</span>: {expOut.state}{expOut.package_bytes ? ` · ${(expOut.package_bytes / 1024).toFixed(1)} KB` : ""}</div>
                   {expOut.download_url && (
                     <a href={expOut.download_url} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 transition-colors">⬇ Download package</a>
                   )}
@@ -4168,7 +4168,7 @@ function App() {
                 {impErr && <div className="bg-red-50 border border-red-200 rounded-lg p-2"><pre className="text-xs text-red-700 whitespace-pre-wrap">{impErr}</pre></div>}
                 {impOut && (
                   <div className={`rounded-lg p-2.5 text-xs border ${(impOut.state || "").includes("SUCCESS") ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-slate-100 border-slate-300 text-slate-600"}`}>
-                    Job <span className="font-mono">{impOut.upload_job_id}</span> — {impOut.state}{impOut.message ? ` · ${impOut.message}` : ""}
+                    Job <span className="font-mono">{impOut.upload_job_id}</span>: {impOut.state}{impOut.message ? ` · ${impOut.message}` : ""}
                   </div>
                 )}
               </div>
@@ -4248,7 +4248,7 @@ function App() {
               <button
                 onClick={() => runAll?.running ? stopRunAll() : startRunAll()}
                 className="flex-1 text-[11px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:border-brand hover:text-brand transition-colors"
-                title="Runs the ladder top to bottom, skipping completed steps — and halts at every review gate. Never auto-approves."
+                title="Runs the ladder top to bottom, skipping completed steps, and halts at every review gate. Never auto-approves."
               >{runAll?.running ? "■ Stop run-all" : "Run all unattended"}</button>
             </div>
             <div className="text-[10px] text-slate-400 mt-2 leading-snug">Unattended skips every review gate. Use for reruns, not first passes.</div>
@@ -4319,7 +4319,7 @@ function App() {
                           <div className="text-sm font-semibold text-slate-700">Discover hasn't run yet</div>
                           <div className="text-xs text-slate-500 mt-1 leading-relaxed">
                             The source, schema and table pickers populate from the catalog. They are dropdowns rather than
-                            free text on purpose — identifier case matters, and a typed name that doesn't match returns
+                            free text on purpose: identifier case matters, and a typed name that doesn't match returns
                             "not found" indistinguishably from a missing grant. Run Discover to load the catalog.
                           </div>
                           <button onClick={() => setActiveStep("discover")}
@@ -4364,7 +4364,7 @@ function App() {
                         <select value={scanSchema} onChange={e => pickSchema(e.target.value)} className={SEL} disabled={!scanDatabase}>
                           <option value="">{scanDatabase ? "Select a schema…" : "Select a source first"}</option>
                           {schemasInDb.length > 0 && totalTablesInDb > 0 && (
-                            <option value="__ALL_SCHEMAS__">⚡ All schemas ({totalTablesInDb.toLocaleString()} tables total — samples a few, estimates full run)</option>
+                            <option value="__ALL_SCHEMAS__">⚡ All schemas ({totalTablesInDb.toLocaleString()} tables total: samples a few, estimates full run)</option>
                           )}
                           {schemasInDb.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
@@ -4390,7 +4390,7 @@ function App() {
                 <div>
                   <div className="text-sm font-semibold text-amber-800">{active.label} ships in the next release ({active.stubPhase})</div>
                   <div className="text-xs text-amber-700 mt-1 leading-relaxed">
-                    The tools behind this step — <span className="font-mono">{(active.substeps || []).map(s => s.tool).join(", ")}</span> — are
+                    The tools behind this step, <span className="font-mono">{(active.substeps || []).map(s => s.tool).join(", ")}</span>, are
                     deployed and reachable on the governance servers; this screen is not built yet.
                   </div>
                 </div>
@@ -4416,7 +4416,7 @@ function App() {
             {/* propagate_dq_score inputs (step 10) — corrective push to one asset */}
             {activeStep === "publish_governance" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">propagate_dq_score — corrective push to one asset</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">propagate_dq_score: corrective push to one asset</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Asset (table, column or DQRO)</label>
@@ -4441,7 +4441,7 @@ function App() {
                   </div>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Fixes or backfills a single asset's score without re-running the scan — the common case after a
+                  Fixes or backfills a single asset's score without re-running the scan: the common case after a
                   partial run. Fill these, then run the <span className="font-mono">propagate_dq_score</span> substep below.
                 </p>
               </div>
@@ -4450,7 +4450,7 @@ function App() {
             {/* Step 1 substep inputs — catalog source scan */}
             {activeStep === "discover" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">scan_mcc_source — catalog metadata for named tables</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">scan_mcc_source: catalog metadata for named tables</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="col-span-2">
                     <label className="block text-xs text-slate-500 font-medium mb-1">Table names (comma or newline separated)</label>
@@ -4466,14 +4466,14 @@ function App() {
                       className={INPUT_CLS + " font-mono"}/>
                   </div>
                 </div>
-                <p className="text-xs text-slate-400">Read-only — resolves tables and columns from the already-populated catalog. list_connections needs no inputs.</p>
+                <p className="text-xs text-slate-400">Read-only: resolves tables and columns from the already-populated catalog. list_connections needs no inputs.</p>
               </div>
             )}
 
             {/* Profile inputs (step 3) — profile once, cache for steps 4 and 7 */}
             {activeStep === "profile" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Table to profile — runs once; steps 4 and 7 read the stored profile</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Table to profile: runs once; steps 4 and 7 read the stored profile</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Table</label>
@@ -4508,7 +4508,7 @@ function App() {
                     <label className="block text-xs text-slate-500 font-medium mb-1">Database <span className="text-slate-400 font-normal">{schemaMapped ? "· derived from schema" : "· set manually"}</span></label>
                     {schemaMapped ? (
                       <div className={INPUT_CLS + " font-mono bg-slate-100 text-slate-600 flex items-center justify-between"}
-                        title="Derived from the selected schema — the catalog does not carry the database, so the app maps it. Not editable.">
+                        title="Derived from the selected schema: the catalog does not carry the database, so the app maps it. Not editable.">
                         <span>{profileDatabaseEff}</span>
                         <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded uppercase tracking-wide">read-only</span>
                       </div>
@@ -4516,7 +4516,7 @@ function App() {
                       <>
                         <input type="text" value={profileDatabase} onChange={e => setProfileDatabase(e.target.value)}
                           placeholder="type a database…" className={INPUT_CLS + " font-mono"}/>
-                        <p className="text-[11px] text-amber-600 mt-1">Not a Snowflake warehouse-path schema — set the database manually, or use the Informatica path.</p>
+                        <p className="text-[11px] text-amber-600 mt-1">Not a Snowflake warehouse-path schema: set the database manually, or use the Informatica path.</p>
                       </>
                     )}
                   </div>
@@ -4527,15 +4527,15 @@ function App() {
                   </div>
                 </div>
                 <p className="text-xs text-slate-400">{profileMode === "local"
-                  ? `Direct Snowflake query on ${profileDatabaseEff || "?"}.${profileSchemaEff || "?"} — synchronous, exact counts.`
-                  : "Runs an IDMC profiling job, then reads statistics from CDGC — asynchronous; the progress bar tracks the poll. Needs a profile defined in IDMC for this table first (surfaced verbatim if absent)."}</p>
+                  ? `Direct Snowflake query on ${profileDatabaseEff || "?"}.${profileSchemaEff || "?"}: synchronous, exact counts.`
+                  : "Runs an IDMC profiling job, then reads statistics from CDGC: asynchronous; the progress bar tracks the poll. Needs a profile defined in IDMC for this table first (surfaced verbatim if absent)."}</p>
               </div>
             )}
 
             {/* Rule authoring inputs (step 7) — the rule the profiler had no basis to propose */}
             {activeStep === "recommend_rules" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Author a rule — available while the review is open</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Author a rule: available while the review is open</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Rule name</label>
@@ -4553,7 +4553,7 @@ function App() {
                     <label className="block text-xs text-slate-500 font-medium mb-1">Logic template</label>
                     <select value={ruleForm.rule_template} onChange={e => setRuleForm(f => ({ ...f, rule_template: e.target.value }))} className={INPUT_CLS}>
                       <option value="">Built-in null check</option>
-                      {ruleTemplates.map(t => <option key={t.file} value={t.file}>{t.template} — {t.dimension}</option>)}
+                      {ruleTemplates.map(t => <option key={t.file} value={t.file}>{t.template}: {t.dimension}</option>)}
                     </select>
                   </div>
                 </div>
@@ -4561,11 +4561,11 @@ function App() {
                   <label className="block text-xs text-slate-500 font-medium mb-1">Describe the rule in plain English</label>
                   <input type="text" value={ruleForm.description}
                     onChange={e => setRuleForm(f => ({ ...f, description: e.target.value }))}
-                    placeholder="e.g. regulatory constraint — SSN must match the 9-digit format" className={INPUT_CLS}/>
+                    placeholder="e.g. regulatory constraint, SSN must match the 9-digit format" className={INPUT_CLS}/>
                 </div>
                 <p className="text-xs text-slate-400">
                   <span className="font-mono">validate_rule</span> pre-flights the logic before it deploys;
-                  <span className="font-mono"> create_dq_rules</span> writes it to CDQ and adds it to the selection above —
+                  <span className="font-mono"> create_dq_rules</span> writes it to CDQ and adds it to the selection above:
                   one approval record covers everything written.
                 </p>
               </div>
@@ -4599,7 +4599,7 @@ function App() {
             ))}
             {activeStep === "schedule_execution" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Mapping tasks — generate from a rule, or create raw</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Mapping tasks: generate from a rule, or create raw</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Source table (generate_dq_mapping_task)</label>
@@ -4611,7 +4611,7 @@ function App() {
                     <label className="block text-xs text-slate-500 font-medium mb-1">Rule specification</label>
                     <select value={dqTaskForm.rule_spec_id} onChange={e => setDqTaskForm(f => ({ ...f, rule_spec_id: e.target.value }))} className={INPUT_CLS}>
                       <option value="">Template defaults (no rule binding)</option>
-                      {orgRules.map(r => <option key={r.id} value={r.id}>{r.name}{r.dimension ? ` — ${r.dimension}` : ""}</option>)}
+                      {orgRules.map(r => <option key={r.id} value={r.id}>{r.name}{r.dimension ? `: ${r.dimension}` : ""}</option>)}
                     </select>
                   </div>
                   <div>
@@ -4646,7 +4646,7 @@ function App() {
                       placeholder="e.g. Nightly_DQ_Run" className={INPUT_CLS}/>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 font-medium mb-1">First run (local time — sent as .000Z UTC)</label>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">First run (local time, sent as .000Z UTC)</label>
                     <input type="datetime-local" value={scheduleForm.startLocal}
                       onChange={e => setScheduleForm(f => ({ ...f, startLocal: e.target.value }))} className={INPUT_CLS}/>
                   </div>
@@ -4673,7 +4673,7 @@ function App() {
                   {[["Hourly", false], ["Daily", true], ["Weekly", false], ["Monthly", true]].map(([p, enabled]) => (
                     <button key={p} onClick={() => enabled && setScheduleForm(f => ({ ...f, interval: p }))}
                       disabled={!enabled}
-                      title={enabled ? undefined : "Needs a day-of-week picker (post-demo) — use Daily or Monthly"}
+                      title={enabled ? undefined : "Needs a day-of-week picker (post-demo): use Daily or Monthly"}
                       className={`px-4 py-1.5 rounded-lg text-xs font-semibold border transition-all ${!enabled ? "bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed" : scheduleForm.interval === p ? "bg-indigo-600 border-indigo-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-brand hover:text-brand"}`}>
                       {p}
                     </button>
@@ -4700,7 +4700,7 @@ function App() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-500 font-medium mb-1">Taskflow tasks — click to add in run order</label>
+                  <label className="block text-xs text-slate-500 font-medium mb-1">Taskflow tasks: click to add in run order</label>
                   <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 max-h-48 overflow-y-auto scrollbar-thin">
                     {(results.schedule_execution?.tasks || []).map(t => {
                       const idx = taskflowForm.picked.indexOf(t.id);
@@ -4715,7 +4715,7 @@ function App() {
                       );
                     })}
                     {!(results.schedule_execution?.tasks || []).length && (
-                      <div className="text-xs text-slate-400 italic p-3">Run Step first — it lists the org's mapping tasks for these pickers.</div>
+                      <div className="text-xs text-slate-400 italic p-3">Run Step first: it lists the org's mapping tasks for these pickers.</div>
                     )}
                   </div>
                 </div>
@@ -4725,7 +4725,7 @@ function App() {
             {/* Step 9 live job monitoring */}
             {activeStep === "schedule_execution" && jobRuns.length > 0 && (
               <div className="space-y-2">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Job runs — live (activity monitor, log fallback)</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Job runs: live (activity monitor, log fallback)</div>
                 <div className="border border-slate-200 rounded-xl overflow-hidden bg-white divide-y divide-slate-100">
                   {jobRuns.map(r => (
                     <div key={r.runId} className="px-4 py-3 flex items-center gap-4">
@@ -4750,7 +4750,7 @@ function App() {
             {/* Lineage substep inputs (step 2) — provenance controls */}
             {activeStep === "scan" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Lineage — where does this table come from, what breaks if it changes</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Lineage: where does this table come from, what breaks if it changes</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Asset</label>
@@ -4768,7 +4768,7 @@ function App() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 font-medium mb-1">Depth (max 5 — each hop is another call)</label>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Depth (max 5, each hop is another call)</label>
                     <select value={lineageForm.depth} onChange={e => setLineageForm(f => ({ ...f, depth: parseInt(e.target.value, 10) }))} className={INPUT_CLS}>
                       {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
@@ -4783,7 +4783,7 @@ function App() {
                 </div>
                 <p className="text-xs text-slate-400">
                   Blank asset falls back to the selected table{defaultAsset ? <span> (<span className="font-mono">{defaultAsset}</span>)</span> : null}.
-                  Lineage populates from the upfront Relationship Discovery scan — nothing on this ladder produces it.
+                  Lineage populates from the upfront Relationship Discovery scan; nothing on this ladder produces it.
                 </p>
               </div>
             )}
@@ -4791,7 +4791,7 @@ function App() {
             {/* Glossary substep inputs (step 6) — solve "no term fits" inside the step */}
             {activeStep === "curate" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Glossary tools — when no existing term fits</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Glossary tools: when no existing term fits</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Asset (suggest_terms_for_asset)</label>
@@ -4855,7 +4855,7 @@ function App() {
             {/* Monitor inputs (step 11) — entered cold; free text is the primary selector */}
             {activeStep === "monitor_quality" && (
               <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-300 shadow-sm">
-                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Asset to monitor — needs no upstream run</div>
+                <div className="text-xs text-slate-400 font-medium uppercase tracking-wider">Asset to monitor: needs no upstream run</div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Asset</label>
@@ -4868,7 +4868,7 @@ function App() {
                     </datalist>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 font-medium mb-1">Lookback (days — trends & alert)</label>
+                    <label className="block text-xs text-slate-500 font-medium mb-1">Lookback (days, trends & alert)</label>
                     <input type="number" min="1" max="365" value={monitorForm.lookback_days}
                       onChange={e => setMonitorForm(f => ({ ...f, lookback_days: e.target.value }))}
                       className={INPUT_CLS}/>
@@ -4957,14 +4957,14 @@ function App() {
                       <label className="block text-xs text-slate-500 font-medium mb-1">Collection name</label>
                       <input type="text" value={collectionForm.collection_name}
                         onChange={e => setCollectionForm(f => ({ ...f, collection_name: e.target.value }))}
-                        placeholder="Defaults to '<table> — Governed Dataset'" className={INPUT_CLS}/>
+                        placeholder="Defaults to '<table> - Governed Dataset'" className={INPUT_CLS}/>
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 font-medium mb-1">Data asset</label>
                     <div className="border border-slate-300 rounded-lg divide-y divide-slate-100 bg-white overflow-hidden">
                       {assets.length === 0
-                        ? <div className="text-xs text-slate-400 italic p-3">No scanned asset — scan a table first (the route falls back to pipeline state).</div>
+                        ? <div className="text-xs text-slate-400 italic p-3">No scanned asset: scan a table first (the route falls back to pipeline state).</div>
                         : assets.map(a => (
                           <label key={a.name} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50">
                             <input type="radio" name="collasset" checked={selected === a.name}
@@ -5021,14 +5021,14 @@ function App() {
                     {/* target_type is informational only — the tool records it but never
                         provisions a destination. Label the control as recording intent
                         so the UI does not overclaim live delivery (spec, step 14). */}
-                    <p className="text-[11px] text-slate-400 mt-1.5">Records the intended delivery method on the marketplace object — provisioning is a separate step; nothing is delivered to a destination from here.</p>
+                    <p className="text-[11px] text-slate-400 mt-1.5">Records the intended delivery method on the marketplace object: provisioning is a separate step; nothing is delivered to a destination from here.</p>
                   </div>
                   <button onClick={() => runStep("configure_delivery")} disabled={running}
                     className="px-4 py-2 rounded-lg font-semibold text-sm bg-brand text-white hover:bg-brand-dark disabled:opacity-50 shadow-sm">
                     {running ? "Saving…" : "Save delivery configuration"}
                   </button>
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-                    Where a signed acknowledgement of terms is required before delivery, remove this step from the automated flow and capture the signature manually — an automated Save cannot record a wet signature.
+                    Where a signed acknowledgement of terms is required before delivery, remove this step from the automated flow and capture the signature manually; an automated Save cannot record a wet signature.
                   </div>
                 </div>
               );
@@ -5094,7 +5094,7 @@ function App() {
                   approving={curApproving}
                   groups={curGroups}
                   banner={{ title: "Review column-to-term links before writing to CDGC",
-                            body: "Grouped by match confidence. Deselected columns are left unlinked — never linked to a fallback term. Create a missing term with the glossary tools above without leaving this review." }}
+                            body: "Grouped by match confidence. Deselected columns are left unlinked, never linked to a fallback term. Create a missing term with the glossary tools above without leaving this review." }}
                   approveLabel="Approve & Write Links"
                   busyLabel="Writing links…"
                 />
@@ -5201,8 +5201,8 @@ function App() {
                     const noOrder = ss.gated && !((results.consumer_access || {}).order_id || (results.consumer_access || {}).order_ref);
                     const blocked = needsForm || nonSnowflake || noOrder;
                     const blockReason = needsForm ? "Fill this tool's inputs above first"
-                      : nonSnowflake ? "Warehouse query is Snowflake-only — this schema is not a Snowflake warehouse path; use the Informatica service"
-                      : noOrder ? "No consumer order yet — place one (create_consumer_access) first"
+                      : nonSnowflake ? "Warehouse query is Snowflake-only: this schema is not a Snowflake warehouse path; use the Informatica service"
+                      : noOrder ? "No consumer order yet: place one (create_consumer_access) first"
                       : (ss.gated ? "Opens a confirmation gate" : undefined);
                     return (
                       <button
@@ -5258,7 +5258,7 @@ function App() {
               )}
               {(activeStep === "taxonomy" || activeStep === "recommend_rules") && !profileReady && (
                 <span className="text-xs text-amber-600 font-medium">
-                  Run <strong>Profile Data</strong> (step 3) first — this step reads its stored profile.{" "}
+                  Run <strong>Profile Data</strong> (step 3) first: this step reads its stored profile.{" "}
                   <button onClick={() => setActiveStep("profile")} className="underline text-brand">Go to step 3</button>
                 </span>
               )}
@@ -5425,7 +5425,7 @@ function App() {
                         ) : data?.error ? (
                           /no asset|not found|no results/i.test(String(data.error)) ? (
                             <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-600 space-y-1">
-                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing — the asset may not be cataloged yet, or the name differs. Use the exact name shown in Discover.</div>
+                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing: the asset may not be cataloged yet, or the name differs. Use the exact name shown in Discover.</div>
                               <div className="text-slate-400 font-mono">{String(data.error).slice(0, 160)}</div>
                             </div>
                           ) : (
@@ -5507,7 +5507,7 @@ function App() {
                             // Requirement 4: resolution returning nothing says "not found
                             // in catalog", not "no results".
                             <div className="bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-600 space-y-1">
-                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing —
+                              <div><strong>Asset not found in catalog.</strong> Name-to-identity resolution returned nothing:
                               the asset may not be cataloged yet, or the name differs from the catalog entry.
                               Use the exact name shown in Discover.</div>
                               <div className="text-slate-400 font-mono">{String(data.error).slice(0, 180)}</div>
