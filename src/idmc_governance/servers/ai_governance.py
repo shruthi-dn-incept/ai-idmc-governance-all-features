@@ -4158,7 +4158,7 @@ def create_cdmp_data_collection(
         asset_name = tables[0].get("name", "Governed Dataset") if tables else "Governed Dataset"
 
     if not name:
-        name = f"{asset_name} - Governed Dataset"
+        name = f"{asset_name} — Governed Dataset"
     if not description:
         dq_dims = (state.get("propagate_scores") or {}).get("dimensions", [])
         score_note = f"DQ scored on {', '.join(dq_dims)}." if dq_dims else ""
@@ -4405,7 +4405,7 @@ def create_delivery_template(
     source_path = ctx["source_path"]
 
     if not name:
-        name = f"{asset_name} - Download Delivery"
+        name = f"{asset_name} — Download Delivery"
 
     # --- a. Check/Create Delivery Format (CSV) ---
     format_id = ""
@@ -4567,7 +4567,7 @@ def create_terms_of_use(
     domain_name = (state.get("cdmp_data_asset") or {}).get("domain", "")
 
     if not name:
-        name = f"{asset_name} - Terms of Use"
+        name = f"{asset_name} — Terms of Use"
     if not content:
         content = (
             f"By accessing the {asset_name} dataset from the {domain_name} domain, you agree to: "
@@ -4683,7 +4683,7 @@ def create_delivery_target(
     source_path = ctx["source_path"]
 
     if not name:
-        name = f"{asset_name} - Download Target"
+        name = f"{asset_name} — Download Target"
 
     target_body = {
         "name":                  name,
@@ -5088,7 +5088,7 @@ def _generate_asset_collection_link_csv(state: dict) -> str:
     """Generate an Informatica CDMP Data Asset - Data Collection CSV template string."""
     ctx = _cdmp_asset_context(state)
     asset_name      = ctx["asset_name"]
-    collection_name = f"{asset_name} - Governed Dataset"
+    collection_name = f"{asset_name} — Governed Dataset"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5113,7 +5113,7 @@ def _generate_delivery_template_csv(state: dict) -> str:
     ])
     writer.writerow([
         f"{asset_name}-delivery",                    # Reference ID
-        f"{asset_name} - Download Delivery",         # Name
+        f"{asset_name} — Download Delivery",         # Name
         f"Download delivery template for {asset_name}",  # Description
         "Active",                                    # Status
         "Automated",                                 # Delivery Type
@@ -5140,7 +5140,7 @@ def _generate_terms_of_use_csv(state: dict) -> str:
     ])
     writer.writerow([
         f"{asset_name}-terms",              # Reference ID
-        f"{asset_name} - Terms of Use",     # Name
+        f"{asset_name} — Terms of Use",     # Name
         f"Usage terms for {asset_name}",    # Description
         "Active",                           # Status
         "Standard",                         # Type
@@ -5153,8 +5153,8 @@ def _generate_tou_collection_link_csv(state: dict) -> str:
     """Generate an Informatica CDMP Terms of Use - Data Collection CSV template string."""
     ctx = _cdmp_asset_context(state)
     asset_name      = ctx["asset_name"]
-    collection_name = f"{asset_name} - Governed Dataset"
-    tou_name        = f"{asset_name} - Terms of Use"
+    collection_name = f"{asset_name} — Governed Dataset"
+    tou_name        = f"{asset_name} — Terms of Use"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5169,9 +5169,9 @@ def _generate_delivery_target_csv(state: dict) -> str:
     asset_name      = ctx["asset_name"]
     connection      = ctx["connection"]
     source_path     = ctx["source_path"]
-    collection_name = f"{asset_name} - Governed Dataset"
-    delivery_name   = f"{asset_name} - Download Delivery"
-    target_name     = f"{asset_name} - Download Target"
+    collection_name = f"{asset_name} — Governed Dataset"
+    delivery_name   = f"{asset_name} — Download Delivery"
+    target_name     = f"{asset_name} — Download Target"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5281,7 +5281,7 @@ def link_asset_to_collection(
 
     ctx   = _cdmp_asset_context(state)
     aname = ctx["asset_name"]
-    cname = f"{aname} - Governed Dataset"
+    cname = f"{aname} — Governed Dataset"
 
     link_csv   = _generate_asset_collection_link_csv(state)
     csv_upload = _cdmp_upload_template(link_csv, f"{aname}_asset_collection_link.csv")
