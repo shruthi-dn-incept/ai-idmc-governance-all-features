@@ -2200,7 +2200,7 @@ function GlossaryHealthResult({ data }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-4 gap-3">
-        <SummaryCard label="Terms scanned" value={data?.term_count ?? 0}/>
+        <SummaryCard label={(data?.term_count ?? 0) >= 100 ? "Terms scanned (first 100)" : "Terms scanned"} value={data?.term_count ?? 0}/>
         <SummaryCard label="Duplicates" value={dup.length} color={dup.length ? "text-red-600" : "text-emerald-600"}/>
         <SummaryCard label="Orphans" value={orp.length} color={orp.length ? "text-amber-600" : "text-emerald-600"}/>
         <SummaryCard label="Definition gaps" value={gaps.length} color={gaps.length ? "text-amber-600" : "text-emerald-600"}/>
@@ -5193,14 +5193,25 @@ function App() {
                     const failed = res && (res.error || (res.status || "").includes("failed"));
                     const ok = res && !failed;
                     const needsForm = formIncomplete(ss);
+                    // #11: the warehouse (Snowflake-direct) path only works on a
+                    // Snowflake-mapped schema; disable it elsewhere rather than let it
+                    // fail silently with no message.
+                    const nonSnowflake = ss.key === "compute_profile_from_snowflake" && activeStep === "profile" && !dbForSchema(profileSchema || scanSchema || "");
+                    // #13: the consumer-access gates need a placed order to act on.
+                    const noOrder = ss.gated && !((results.consumer_access || {}).order_id || (results.consumer_access || {}).order_ref);
+                    const blocked = needsForm || nonSnowflake || noOrder;
+                    const blockReason = needsForm ? "Fill this tool's inputs above first"
+                      : nonSnowflake ? "Warehouse query is Snowflake-only — this schema is not a Snowflake warehouse path; use the Informatica service"
+                      : noOrder ? "No consumer order yet — place one (create_consumer_access) first"
+                      : (ss.gated ? "Opens a confirmation gate" : undefined);
                     return (
                       <button
                         key={ss.tool}
                         onClick={() => ss.gated ? openAccessConfirm(ss) : runSubAction(active, ss)}
-                        disabled={anyRunning || needsForm}
-                        title={needsForm ? "Fill this tool's inputs above first" : (ss.gated ? "Opens a confirmation gate" : undefined)}
+                        disabled={anyRunning || blocked}
+                        title={blockReason}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all shadow-sm
-                          ${isRunning || needsForm ? "bg-indigo-100 border-indigo-300 text-indigo-500 cursor-not-allowed"
+                          ${isRunning || blocked ? "bg-indigo-100 border-indigo-300 text-indigo-500 cursor-not-allowed"
                           : failed    ? "bg-red-100 border-red-400 text-red-700 hover:bg-red-200"
                           : ok        ? "bg-emerald-100 border-emerald-400 text-emerald-800 hover:bg-emerald-200"
                           :             "bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-500"}`}

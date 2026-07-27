@@ -1371,6 +1371,15 @@ def scan_fetch_columns(
             hier = hier.get("children") or hier.get("items") or []
         columns = _fetch_columns_parallel(hier, table_name=table_name)
 
+    # #12: Snowflake internal objects (e.g. SYS_CONSTRAINT_<uuid>) surface as
+    # pseudo-columns with an unknown/blank type. Filter them so they don't render
+    # as columns. Done before caching, so cache reads are clean too.
+    def _is_internal(c: dict[str, Any]) -> bool:
+        nm = str(c.get("name") or "").upper()
+        dt = str(c.get("data_type") or "").strip().lower()
+        return nm.startswith("SYS_CONSTRAINT_") or (nm.startswith("SYS_") and dt in ("", "unknown"))
+    columns = [c for c in columns if not _is_internal(c)]
+
     record = {
         "name":        table_name,
         "internal_id": table_id,
