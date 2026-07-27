@@ -392,7 +392,7 @@ function DiscoverResult({ data, onSelectSchema }) {
                 <span className="text-sm font-bold tracking-wide">{cs.source}</span>
               </div>
               <div className="flex items-center gap-3 text-indigo-200 text-xs">
-                <span>{cs.total_tables?.toLocaleString()} tables · {schemaCount} schema{schemaCount !== 1 ? "s" : ""} · {scanned ? <>scanned {scanned}</> : <span className="text-amber-300 font-semibold">never scanned</span>}</span>
+                <span>{cs.total_tables?.toLocaleString()} tables · {schemaCount} schema{schemaCount !== 1 ? "s" : ""} · {scanned ? <>scanned {scanned}</> : <span className="text-amber-300 font-semibold">never scanned</span>}{(!cs.total_tables && cs.note) ? <span className="text-amber-200"> · {cs.note}</span> : null}</span>
                 <span className="text-lg leading-none">{isOpen ? "▾" : "▸"}</span>
               </div>
             </button>
@@ -635,7 +635,22 @@ function EstimateBanner({ data }) {
   );
 }
 
-function TaxonomyResult({ data, onGoToStep }) {
+function TaxonomyResult({ data, onGoToStep, scanSource, scanSchema, scanTable, profileObject }) {
+  // Identity guard (mirror of ProfileResult): never render a taxonomy generated for
+  // a {connection, schema, table} other than the current selection (#step-4 stale).
+  const curTable = String(profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || "").trim();
+  const _sel = data && data._selection;
+  if (_sel && curTable && (
+        String(_sel.table || "").toLowerCase() !== curTable.toLowerCase() ||
+        String(_sel.connection || "") !== String(scanSource || "") ||
+        String(_sel.schema || "") !== String(scanSchema || ""))) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-700">
+        This taxonomy was generated for <span className="font-mono font-semibold">{_sel.table}</span>, but the current
+        selection is <span className="font-mono font-semibold">{curTable}</span>. Re-run Generate Taxonomy for the selected table.
+      </div>
+    );
+  }
   const domains = data?.domains || data?.result?.domains || [];
   const s = data?._summary || data?.result?._summary || {};
   const grounded = domains.some(d => (d.subdomains || []).some(sd => (sd.business_terms || []).some(bt => bt.evidence)));
@@ -2614,7 +2629,22 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
   );
 }
 
-function RecommendRulesResult({ data }) {
+function RecommendRulesResult({ data, scanSource, scanSchema, scanTable, profileObject }) {
+  // Identity guard (mirror of ProfileResult): step 7 reads the step-3 profile store;
+  // never render recommendations computed for a different table than the selection.
+  const curTable = String(profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || "").trim();
+  const _sel = data && data._selection;
+  if (_sel && curTable && (
+        String(_sel.table || "").toLowerCase() !== curTable.toLowerCase() ||
+        String(_sel.connection || "") !== String(scanSource || "") ||
+        String(_sel.schema || "") !== String(scanSchema || ""))) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-700">
+        These recommendations are for <span className="font-mono font-semibold">{_sel.table}</span>, but the current
+        selection is <span className="font-mono font-semibold">{curTable}</span>. Re-run Recommend Rules for the selected table.
+      </div>
+    );
+  }
   const approved = data?.approved || [];
   return (
     <div className="space-y-3">
@@ -2991,6 +3021,7 @@ function stepStatusLine(step, status, results) {
 const LS_KEY = "idmc_gov_ui_state_v2";
 
 function loadPersistedState() {
+  try { localStorage.removeItem("idmc_gov_ui_state"); } catch {}  // clear legacy v1 key
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return null;
@@ -3012,12 +3043,16 @@ function App() {
   // running state to idle on load; the steward re-runs with a real click.
   const [statuses,   setStatuses]   = useState(() => {
     const s = _saved?.statuses || {};
-    return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v === STATUS.running ? STATUS.idle : v]));
+    // "running" can't survive a reload; the Discover payload is no longer persisted
+    // (too large), so its result is gone on reload — reset both to idle.
+    return Object.fromEntries(Object.entries(s).map(([k, v]) =>
+      [k, (v === STATUS.running || k === "discover") ? STATUS.idle : v]));
   });
   const [results,    setResults]    = useState(_saved?.results     || {});
   const [errors,     setErrors]     = useState({});
   const [stepProgress, setStepProgress] = useState({});
   const [showJson,   setShowJson]   = useState({});
+  const [persistError, setPersistError] = useState(false);
   const abortRef = useRef(null);
 
   const [scanTable,    setScanTable]    = useState(_saved?.scanTable    || "");
@@ -3192,11 +3227,19 @@ function App() {
     return () => { notifySessionExpired = null; };
   }, []);
 
-  // Persist key state to localStorage whenever it changes
+  // Persist key state to localStorage whenever it changes. Do NOT persist the
+  // Discover payload (catalog_sources_grouped + tables_for_selection, multi-MB): it
+  // used to blow the ~5MB quota and silently drop the ENTIRE save. Re-run Discover
+  // after a reload. Surface a failed write instead of losing state silently.
   useEffect(() => {
+    const slimResults = { ...results };
+    delete slimResults.discover;
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results, scanTable, scanSchema, scanSource, scanDatabase, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs }));
-    } catch {}
+      localStorage.setItem(LS_KEY, JSON.stringify({ activeStep, statuses, results: slimResults, scanTable, scanSchema, scanSource, scanDatabase, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs }));
+      setPersistError(false);
+    } catch (e) {
+      setPersistError(true);
+    }
   }, [activeStep, statuses, results, scanTable, scanSchema, scanSource, scanDatabase, profileObject, profileMode, profileSchema, profileDatabase, approvedRecs]);
 
   const discoverTables    = results.discover?.result?.tables_for_selection || [];
@@ -3555,6 +3598,9 @@ function App() {
           // Step 3 profile identity — grounds classification in the data.
           connection: scanSource || "", schema: scanSchema || "", table: profObj,
         }, sig);
+        if (data && typeof data === "object") {
+          data._selection = { connection: scanSource || "", schema: scanSchema || "", table: profObj };
+        }
       }
       else if (stepId === "recommend_rules") {
         const scanned = (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean);
@@ -3575,7 +3621,7 @@ function App() {
         abortRef.current = null;
         setStatus(stepId, STATUS.idle);
         if (!items.length) {
-          setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: 0, approved: [] } }));
+          setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: 0, approved: [], _selection: { connection: scanSource || "", schema: scanSchema || "", table: profObj } } }));
           setStatus(stepId, STATUS.done);
           return "done";
         }
@@ -3802,10 +3848,11 @@ function App() {
     const approved = recItems.filter(i => recSelected.has(i.name))
       .map(i => ({ name: i.name, dimension: i.type, column: i.parent, evidence: i.subtitle }));
     setApprovedRecs(approved);
-    setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: recItems.length, approved } }));
+    const _profObj = profileObject || (scanTable && scanTable !== "__ALL__" ? scanTable : "") || (resultsRef.current.scan?.columns || []).map(c => c?.table).filter(Boolean)[0] || "";
+    setResults(prev => ({ ...prev, recommend_rules: { recommendation_count: recItems.length, approved, _selection: { connection: scanSource || "", schema: scanSchema || "", table: _profObj } } }));
     setStatus("recommend_rules", STATUS.done);
     setRecItems([]);
-  }, [recItems, recSelected]);
+  }, [recItems, recSelected, scanSource, scanSchema, scanTable, profileObject]);
 
   const approveDomainStructure = useCallback(async () => {
     setDomainApproving(true);
@@ -4255,6 +4302,7 @@ function App() {
               >{runAll?.running ? "■ Stop run-all" : "Run all unattended"}</button>
             </div>
             <div className="text-[10px] text-slate-400 mt-2 leading-snug">Unattended skips the review gates on steps {formatStepList(GATED_STEP_NUMS)}. Use for reruns, not first passes.</div>
+            {persistError && <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2 leading-snug">Storage full: new changes are not being saved. Reset the session or export your work.</div>}
           </div>
         </aside>
 
@@ -5554,7 +5602,7 @@ class ErrorBoundary extends React.Component {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
         <div className="max-w-lg w-full bg-white border border-red-200 rounded-xl shadow-sm p-6 space-y-3">
           <div className="text-sm font-bold text-red-600 uppercase tracking-wider">Something went wrong rendering this view</div>
-          <p className="text-sm text-slate-600">Your session is saved. <strong>Reload</strong> to recover it, or dismiss to retry this view.</p>
+          <p className="text-sm text-slate-600">Your place and step results are saved; the catalog list reloads when you re-run Discover. <strong>Reload</strong> to recover, or dismiss to retry this view.</p>
           <pre className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap max-h-40 overflow-auto">{typeof formatToolError === "function" ? formatToolError(msg) : msg}</pre>
           <div className="flex gap-2">
             <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-lg text-sm font-semibold bg-brand text-white hover:bg-brand-dark shadow-sm">Reload</button>

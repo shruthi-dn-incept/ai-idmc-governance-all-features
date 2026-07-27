@@ -1167,6 +1167,59 @@ def list_catalog_tables(
                 "total_tables": total,
                 "last_scanned": _last_scanned(cat_name),
             })
+
+        # Merge: surface registered sources missing from the table-derived grouping
+        # (the asset-search "silent drop" of sources with no indexed tables). Additive;
+        # existing grouped sources are untouched. Normalize on lowercased name so the
+        # table-path labels already shown (DQ_FRAMEWORK, DQ_TEST, pharma_bronze) are
+        # not double-listed.
+        _present = {(s.get("source") or "").strip().lower() for s in catalog_sources_out}
+        for _sn in source_names:
+            _nk = (_sn or "").strip().lower()
+            if not _nk or _nk in _present:
+                continue
+            _present.add(_nk)
+            _browsed = []
+            # RND_SNOWFLAKE_CATALOG's tables are in the catalog hierarchy but not yet
+            # in the keyword-search index discover reads; source them from the
+            # authoritative hierarchy browse so the source is drillable, not empty.
+            if "RND_SNOWFLAKE_CATALOG" in _sn.upper():
+                try:
+                    _browsed = _browse_all_tables_in_schema(_sn)
+                except Exception as _exc:  # noqa: BLE001
+                    log.info("discover merge: hierarchy browse for %s failed: %s", _sn, _exc)
+            if _browsed:
+                _nst: dict[str, dict[str, list]] = {}
+                for _h in _browsed:
+                    _eid = (_h.get("core.externalId") or (_h.get("systemAttributes") or {}).get("core.externalId") or "")
+                    _dbn, _scn = "", "(no schema)"
+                    if "://" in _eid:
+                        _p = _eid.split("://", 1)[1].split("~")[0].split("/")
+                        if len(_p) >= 4:
+                            _dbn, _scn = _p[1], _p[-2]
+                        elif len(_p) >= 3:
+                            _scn = _p[-2]
+                    _nst.setdefault(_dbn, {}).setdefault(_scn, []).append(
+                        {"name": _name_of(_h), "id": _id_of(_h), "external_id": _eid})
+                _dbs_out, _flat2, _tot2 = [], [], 0
+                for _dn, _sd in sorted(_nst.items()):
+                    _sin = [{"schema": _s, "tables": sorted(_t, key=lambda x: x["name"])}
+                            for _s, _t in sorted(_sd.items())]
+                    _dbs_out.append({"database": _dn, "schemas": _sin})
+                    _flat2.extend(_sin)
+                    _tot2 += sum(len(s["tables"]) for s in _sin)
+                catalog_sources_out.append({
+                    "source": _sn, "databases": _dbs_out, "schemas": _flat2,
+                    "total_tables": _tot2, "last_scanned": _last_scanned(_sn),
+                })
+            else:
+                catalog_sources_out.append({
+                    "source": _sn, "databases": [], "schemas": [],
+                    "total_tables": 0, "last_scanned": _last_scanned(_sn),
+                    "note": "no indexed assets yet",
+                })
+        catalog_sources_out.sort(key=lambda s: (s.get("source") or "").lower())
+
         return {
             "catalog_sources_grouped": catalog_sources_out,
             "total_tables":            sum(s["total_tables"] for s in catalog_sources_out),
