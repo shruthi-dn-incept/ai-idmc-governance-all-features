@@ -2982,7 +2982,14 @@ function App() {
   const _initStep = (_savedStep && VALID_STEP_IDS.has(_savedStep)) ? _savedStep : "discover";
 
   const [activeStep, setActiveStep] = useState(_initStep);
-  const [statuses,   setStatuses]   = useState(_saved?.statuses   || {});
+  // A "running" status cannot survive a reload — the in-flight fetch is gone.
+  // Restoring it leaves a phantom step whose progress bar animates to ~97% and
+  // never completes (#3, mistaken for an auto-run that hangs). Reset any persisted
+  // running state to idle on load; the steward re-runs with a real click.
+  const [statuses,   setStatuses]   = useState(() => {
+    const s = _saved?.statuses || {};
+    return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v === STATUS.running ? STATUS.idle : v]));
+  });
   const [results,    setResults]    = useState(_saved?.results     || {});
   const [errors,     setErrors]     = useState({});
   const [stepProgress, setStepProgress] = useState({});
@@ -3468,6 +3475,15 @@ function App() {
         if (returnedId && objName && returnedId.toLowerCase() !== objName.toLowerCase()) {
           throw new Error(`Profiling returned results for "${returnedId}", not "${objName}" — the run for `
             + `this table did not complete. Nothing was stored; re-run Profile Data.`);
+        }
+        // #2: a profile with column names but no statistics is empty — do not
+        // store it, do not overwrite an existing good profile, do not report
+        // success. Passes if ANY column carries a stat; throws only when every
+        // column is bare (the empty-service-result that read as "14 / success").
+        const _cols = data?.columns || {};
+        const _hasStats = Object.values(_cols).some(st => st && (st.null_pct != null || st.distinct_count != null || st.min_value != null || st.max_value != null));
+        if (!_hasStats) {
+          throw new Error(`Profiling returned ${Object.keys(_cols).length} column(s) but no statistics for "${objName}" — nothing stored, existing profile kept. Statistics may still be propagating (retry shortly), or the connector can't enumerate them via the service path — use Warehouse query.`);
         }
         data.object_name = objName;
         // Tag with the selection triple so the panel is never rendered for a
@@ -5228,7 +5244,7 @@ function App() {
                   <div className={`text-sm ${secondary ? "text-amber-800" : "text-red-700 font-mono"}`}>
                     {busy ? PROFILE_BUSY_MSG : raw}
                   </div>
-                  <button onClick={() => maybeConfirmRun(activeStep)} disabled={anyRunning}
+                  <button onClick={() => maybeConfirmRun(activeStep)} disabled={statuses[activeStep] === STATUS.running || Object.values(subRunning).some(Boolean)}
                     className={`mt-2 px-3 py-1 rounded-md text-xs font-semibold border disabled:opacity-50 ${secondary ? "border-amber-400 text-amber-700 hover:bg-amber-100" : "border-red-300 text-red-600 hover:bg-red-100"}`}>
                     Retry
                   </button>
@@ -5461,7 +5477,33 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// Error boundary — a render-time throw must never blank #root and drop the
+// session. State persists to localStorage on every change (LS_KEY), so reload
+// recovers; the boundary shows a recoverable fallback instead of an unmount.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { try { console.error("UI error boundary caught:", error, info); } catch (e) {} }
+  render() {
+    if (!this.state.error) return this.props.children;
+    const msg = (this.state.error && this.state.error.message) ? this.state.error.message : String(this.state.error);
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-lg w-full bg-white border border-red-200 rounded-xl shadow-sm p-6 space-y-3">
+          <div className="text-sm font-bold text-red-600 uppercase tracking-wider">Something went wrong rendering this view</div>
+          <p className="text-sm text-slate-600">Your session is saved. <strong>Reload</strong> to recover it, or dismiss to retry this view.</p>
+          <pre className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap max-h-40 overflow-auto">{typeof formatToolError === "function" ? formatToolError(msg) : msg}</pre>
+          <div className="flex gap-2">
+            <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-lg text-sm font-semibold bg-brand text-white hover:bg-brand-dark shadow-sm">Reload</button>
+            <button onClick={() => this.setState({ error: null })} className="px-4 py-2 rounded-lg text-sm font-semibold border border-slate-300 text-slate-600 hover:bg-slate-50">Dismiss</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
