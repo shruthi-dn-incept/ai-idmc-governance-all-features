@@ -6,6 +6,10 @@
 *.p8
 snowflake_scale_test_rsa_key*
 rsa_key.*
+# Key-handling helper scripts — kept local; they name the service account and
+# are not part of the shipped app.
+/check_snowflake_key.py
+/prep_snowflake_key.py
 
 # VS Code MCP config — may contain interpolation refs but we keep it untracked
 # so anyone cloning the repo starts from .vscode/mcp.example.json.
@@ -32,6 +36,12 @@ docs/*
 # Layout reference for the UI build (mock HTML + its README) — tracked deliberately.
 !docs/reference/
 !docs/reference/**
+# Re-exclude local working docs that slip past the docs/*.md whitelist above:
+# handoff/session notes and accidental "(1)" download duplicates. The real
+# tracked docs (the build spec, IDMC_Console_Runbook.md) do not match these.
+docs/*Handoff*
+docs/*Session*
+docs/* (1)*
 
 # Local config for dq_monitor alerts (no IDMC API exposes alert registration;
 # this file is consumed only by sibling cron/agent processes).
