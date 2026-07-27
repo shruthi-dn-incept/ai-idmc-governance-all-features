@@ -4210,8 +4210,6 @@ function App() {
                     // because a secondary substep errored afterwards (req 7, inverted).
                     const status = (rawStatus === STATUS.error && stepHasPrimaryResult(results[step.id])) ? STATUS.done : rawStatus;
                     const isActive = step.id === activeStep;
-                    const isNew = step.num === 3 || step.num === 7;
-                    const gated = step.gate || step.gateOn;
                     return (
                       <button key={step.id} onClick={() => setActiveStep(step.id)}
                         className={`w-full text-left px-3 py-2 flex gap-2.5 transition-colors ${isActive ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
@@ -4219,10 +4217,6 @@ function App() {
                         <span className="min-w-0 flex-1">
                           <span className={`block text-[12.5px] font-semibold ${status === STATUS.skipped ? "line-through text-slate-400" : "text-slate-700"}`}>
                             {step.num} · {step.label}
-                            {isNew && <span className="ml-1 text-[9px] bg-indigo-100 text-brand-dark px-1 py-0.5 rounded font-bold align-middle">NEW</span>}
-                            {gated && (step.gatePhase
-                              ? <span className="ml-1 text-[9px] bg-slate-100 text-slate-400 px-1 py-0.5 rounded font-bold align-middle" title={`Review gate ships in ${step.gatePhase}`}>REVIEW</span>
-                              : <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold align-middle" title={step.gateOn ? `Approval gate on: ${step.gateOn.join(", ")}` : "Approval gate"}>REVIEW</span>)}
                           </span>
                           <span className="block text-[11px] text-slate-400 truncate">{stepStatusLine(step, status, results)}</span>
                         </span>
