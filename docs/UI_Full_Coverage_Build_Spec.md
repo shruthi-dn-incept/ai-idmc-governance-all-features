@@ -342,6 +342,50 @@ Across the marketplace phase it calls `publish_marketplace_full`, which covers s
 
 ---
 
+## The source list must not be derived from asset search
+
+`catalog_sources_grouped` — what step 1 renders — is built by querying `data360/search` for assets and grouping them by source. A source with zero indexed tables therefore produces no assets, no group, and no row: it is silently absent rather than shown as empty. `catalog_source_names` holds the authoritative registry and retains it.
+
+This is one defect behind two symptoms that were investigated separately. Sources missing from Discover, and never-scanned sources not rendering their amber state, are the same mechanism: a source that has never been scanned has nothing in the search index, so the amber row it should produce never exists to be rendered. The rendering code was correct throughout; the payload never contained the row.
+
+It also caused a wrong diagnosis twice in one session — a source was declared not to exist on the basis of Discover output, before the authoritative list was consulted. Any conclusion about what is in the catalog must come from `catalog_source_names`, not from what Discover renders.
+
+**Fix by merging, not replacing.** Keep the asset-search grouping as the primary path — it works and it carries the table lists — and add any source present in `catalog_source_names` but absent from the grouping, rendered with a zero table count and a note that it has no indexed assets yet. This is additive, so existing behaviour is unchanged, and it makes the invisible visible rather than rebuilding the entry point to the whole ladder.
+
+**Search-index lag is a separate constraint and code cannot fix it.** A source can be fully present in CDGC Browse with its tables enumerated, and still be absent from `data360/search` for some time afterwards. During that window the merge above makes the source appear with zero tables — visible, but not drillable, because the table list comes from the same search segment. Whether Browse exposes an enumeration path the application could use instead is worth establishing; until it does, a newly scanned source is not demonstrable however correct the code is.
+
+---
+
+## Client-side state: what may and may not be persisted
+
+**The Discover result must not be written to localStorage.** It serialises to roughly 3.3MB — six thousand tables with their metadata — against a browser quota of about 5MB. Live measurement caught the app attempting a 3,334,443-byte write, receiving `QuotaExceededError`, and swallowing it. The consequence is not a failed save; it is a silent one. In-memory state stays correct and the UI looks healthy, so nothing surfaces until a remount, at which point the app rehydrates from the last write that succeeded — a 236-byte record with an empty `results` object — and every completed step returns to Not started.
+
+Persist only what the UI cannot recompute: the selected `{database, schema, table}`, step statuses, and the small result summaries the sidebar status lines need. Catalog payloads stay in memory and are re-fetched. A legacy `idmc_gov_ui_state` key also occupies ~3.2MB on existing browsers and is not cleared by Reset; clear it explicitly on load.
+
+**A failed persist must be visible.** Swallowing `QuotaExceededError` is what turned a storage limit into silent total data loss. Surface it, and never tell the user state was saved without confirming the write returned.
+
+That last point generalises. The ErrorBoundary fallback reads *"Your session is saved. Reload to recover it"* — a statement that was false at the moment it was written. This is the third instance of the same defect class in this codebase: `target_type` on step 14 labels a delivery destination it does not provision, and step 9's frequency control offered a Weekly schedule that ran daily. **A control or message that asserts something the system does not do is a defect of the same severity as a broken function**, because it is the one class of bug that a user cannot detect. Every assertion in the UI should be traceable to something the code actually guarantees.
+
+**Every step that consumes a stored profile must verify it matches the current selection.** Step 3 does this and is the reference implementation. Step 4 does not, and renders another table's taxonomy: after scanning a second table in step 2, step 4 produced a pharmaceutical-sales domain hierarchy for `CUSTOMER_POSITIONS`, with a green Complete status, no warning, and the `PROFILE INFORMED` badge silently absent. Re-scanning did not clear it; only a full Reset did. Step 7 reads the same store and needs the same guard.
+
+The badge disappearing is the tell worth generalising: when evidence-derived output loses its evidence, the absence of the badge is the signal, and it must fail loudly rather than degrade quietly into an unattributed result.
+
+---
+
+## Deployment verification
+
+Two gaps in how builds reach the container, both found the expensive way.
+
+**1. The deploy script continues after a failed build.** On two occasions `az acr build` printed an error and the script proceeded to redeploy the previous `:latest` image. Both times the stale deploy was caught only by grepping the served HTML for expected markers — a check that happens to have been run, not one the process guarantees. Add `if (-not $?) { throw }` after the build step so a failed build cannot silently redeploy. This is the higher priority of the two: a silently stale deploy means shipping code you believe you fixed.
+
+**2. The application cannot report which build it is running.** There is no `/version`, no build string in the served HTML, and `/api/health` returns only MCP server states. Verifying that the container matches `main` therefore requires either deployment logs or fingerprinting the served bundle against expected code markers — the latter took a test agent twenty minutes and returned only circumstantial evidence, because `last-modified` proves recency and not identity.
+
+Expose the commit at `/api/version`. Bake it at image build time — a Docker build argument populated from `git rev-parse --short HEAD`, surfaced as an environment variable the app reads — so the value cannot drift from the artifact. Then deploy verification becomes one request compared against the commit intended, rather than a marker hunt.
+
+**Sequence these deliberately.** The version endpoint requires touching the Dockerfile and the deploy script, which is the same script with the silent-failure history — so the change intended to detect stale deploys could itself cause one if it breaks the build and the script swallows it. Harden the script first, confirm a clean deploy on the hardened script, then add the endpoint. Verify the first deploy after each change more carefully than usual.
+
+Neither is on the demo path and neither is reachable from the UI, so regression risk is near zero. The value is highest before a period of frequent deploys, not after it.
+
 ## Phase 0: Plumbing — SHIPPED
 
 **Status: complete.** Commits `3c695e7`, `735d939`, `ebc9edd`, `8fc0647` on main. Deployed to the Container App and verified live: 15 rungs, 47 substeps, 27 muted, four 501 stubs, `LS_KEY` orphaning confirmed in a cached browser, step 12's four-key composite proven end-to-end. **Not pushed to origin** at time of writing — origin HEAD is `3c6b67c`, where `STEPS` still declares 7 steps. Anything verified by cloning origin reflects the pre-Phase 0 state.
@@ -433,7 +477,7 @@ Profiling through the service is asynchronous: `execute` returns a job id and th
 
 `COLUMN` · `NULL %` · `DISTINCT` · `MIN / MAX` · `READS AS`
 
-`NULL %` as a small bar with the percentage, turning red above the 10% band `recommend_dq_rules` uses. `DISTINCT` carrying a `N dup` badge — but only where duplication is a defect. On live data the badge fires on every single column, because distinct count is below row count for almost everything, and a badge that appears on every row carries no signal. Worse, it contradicts the adjacent column: a code list reading `4 dup` is being flagged for the low cardinality that makes it a code list. Suppress the badge where `READS AS` resolves to code list, and on columns whose distinct count is a small fraction of the row count — duplication only means something on a column that looks like an identifier. `READS AS` is a UI-side inference from distinct counts, null rates and ranges — identifier, free text, measure, code list, date. It is derived for display and does not come back from any tool, so do not present it as an IDMC output.
+`NULL %` as a small bar with the percentage, turning red above the 10% band `recommend_dq_rules` uses. `DISTINCT` carrying a `N dup` badge — fired on **high-cardinality columns only**, where duplication is genuinely a defect. An earlier revision of this rule said to suppress on code lists and on low-cardinality columns, which was too blunt: it silenced the badge on `POSITION_ID` (18 distinct of 19 rows), the one column the demo depends on, while still firing on others. The correct test is a **distinct-to-row ratio above roughly 0.9** — a column that is nearly unique but not quite is an identifier with duplicates, which is a real finding. A column at 4 distinct of 1,000 is a code list, not a defect, and gets no badge. Do not key the suppression off `READS AS`, which is itself a heuristic and misclassifies numeric identifiers as measures. `READS AS` is a UI-side inference from distinct counts, null rates and ranges — identifier, free text, measure, code list, date. It is derived for display and does not come back from any tool, so do not present it as an IDMC output.
 
 Beneath the table, the callout that makes the case for the step's position:
 
@@ -697,6 +741,61 @@ Destructive and irreversible from the UI. Red rather than emerald, with the affe
 | `register_in_cdgc` vs `set_dq_occurrences` | two paths to the same outcome | document which is canonical |
 | `get_profile_results` vs `_direct` | fallback variant | keep both in code, expose one |
 | `auto_approve_access` | bypasses the step 15 approve gate | keep as a route, never wire to run-all |
+
+---
+
+## Proposed: Critical Data Element identification
+
+**Not committed, not demo scope.** Recorded because a competitor evaluation exposed the gap concretely and the design should not be reconstructed from memory later.
+
+### Why this exists
+
+Asked to recommend DQ rules against a freshly scanned catalog resource, CLAIRE GPT returned nothing: it identified no critical data elements "based on the provided usage context," and with no CDEs it had no basis for rules. The chain is description → CDE → rules, and the first link failed because the asset had just been scanned and carried no description.
+
+That is the same failure the Opella objection named — classification from names and descriptions rather than from data — one layer higher. This platform profiles before it classifies, so it has evidence available at exactly the point where a description-driven approach has nothing.
+
+Be accurate about the competitor, though. Deriving criticality from *usage context* — which regulatory report or filing consumes this element — is the stronger governance model, not a weaker one. Alation's Critical Data Manager does this deliberately: a Data Consumption represents a business-critical use case, and CDEs are identified relative to it. The limitation is that it requires that context to already be documented. The defensible claim is not that context-driven identification is wrong; it is that this platform can bootstrap criticality from measured evidence when no context exists yet, and absorb context when it arrives.
+
+### Signals, in order of strength
+
+Criticality is scored from what the ladder already produces. The ordering matters: measured signals outrank inferred ones, and that ordering is the argument.
+
+| Signal | Source | Why it ranks here |
+|---|---|---|
+| **Downstream impact** | `generate_impact_report`, `_classify_severity` on step 2 | Measured, not inferred. A column whose change breaks three BI assets is critical by demonstration. This is the strongest signal available and the one a description-driven approach cannot produce at all. |
+| **Semantic class** | step 4 taxonomy, step 6 glossary links | A column classified into a financial or identity domain, or linked to a business term, is business-meaningful by prior steward judgment. |
+| **Profile shape** | step 3 | Identifier-like cardinality, monetary ranges, format-regular values. Inference, not measurement — label it as such. |
+| **Quality volatility** | step 11, where history exists | A column already failing its rules carries risk. Only available on re-runs; never the primary basis. |
+
+Score to three levels, as Alation does — low, medium, high — with the contributing signals shown per column. **The evidence line is the feature**, exactly as it is on step 4: `← 3 downstream BI assets, classified Financial Exposure, 18/19 distinct`. A criticality score without its derivation is an opinion, and an opinion is what the competitor already offers.
+
+### Placement
+
+A new step between **Curate Columns** and **Recommend Rules**. Both operate at column granularity, so the sequence is natural: link columns to terms, decide which of those columns are critical, then recommend rules for the critical ones.
+
+This changes rule recommendation from "propose rules for all fourteen columns" to "propose rules for the four that matter," which is both better governance and less noise. Alation enforces the same shape — data quality monitors attach only to Control Point elements, not to everything in a CDE.
+
+It is a gate, using `DomainApprovalPanel`: the agent proposes, the steward deselects false positives and approves. Criticality is a judgment with consequences, and it is the class of decision the gates exist for.
+
+Cost to be honest about: inserting a step renumbers 7 through 15 into 8 through 16, and the step count appears throughout this document, the ladder, and the sidebar. The cheaper alternative is folding CDE identification into step 7 as a first stage before rule recommendation, which avoids renumbering but conflates two decisions — what matters, and how we check it — that have different approvers in every mature governance model.
+
+### Where it stitches
+
+A badge that appears only on its own step is decoration. These are the places the designation should actually change behaviour:
+
+- **Step 2, 3** — CDE columns marked in the column metadata and profile tables, so criticality is visible wherever the column appears.
+- **Step 7, 8** — rules recommended and created for CDEs first; non-critical columns optional and collapsed.
+- **Step 10** — CDE designation published to the catalog alongside terms and rules, so it is visible org-wide rather than living in this tool.
+- **Step 11** — monitoring prioritises CDEs, and alert thresholds are tighter for them. A 5-point drop on a critical element should fire where the same drop elsewhere does not.
+- **Step 14, 15** — **the strongest stitch.** A dataset containing critical elements requires stricter access control. Dual control already exists on step 15; CDE presence is the natural thing to *trigger* it rather than having it always-on. "This dataset contains 3 critical data elements, so release requires two approvers" is a policy the platform can enforce because it identified the elements itself.
+
+That last one is what makes this a governance capability rather than a labelling feature.
+
+### What not to copy
+
+Alation's CDM carries a standards subsystem — Approval Rules, Baseline Metadata, Risk Assessment Framework and Curation Score standards, each with its own draft/review/published versioning workflow, plus Document Hub ingestion and consumption-unit metering. That is a large surface and most of it is orthogonal to this ladder.
+
+Build the designation and its evidence. Do not build a standards-authoring subsystem to support it; the risk criteria can be configuration until there is a reason for them to be a versioned object.
 
 ---
 
