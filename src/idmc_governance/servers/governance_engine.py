@@ -1197,7 +1197,7 @@ def generate_dq_mapping_task(
         hint = ""
         if mr.status_code in (403, 404) or "REPO_36004" in (mr.text or ""):
             hint = (
-                f" — template mapping id '{template_mapping_id}' is not loadable in this org. "
+                f". Template mapping id '{template_mapping_id}' is not loadable in this org. "
                 "It is likely stale, deleted, or unpublished. Set IDMC_DQ_TEMPLATE_MAPPING_ID "
                 "to a currently-published M_DQ_Generic mapping (verify with probe_dq_template.py)."
             )
@@ -2627,8 +2627,8 @@ def _snowflake_connect():
         pwd = env.get("SNOWFLAKE_PASSWORD") or os.getenv("SNOWFLAKE_PASSWORD")
         if not pwd:
             raise RuntimeError(
-                "Neither SNOWFLAKE_PRIVATE_KEY_B64 nor SNOWFLAKE_PASSWORD set in .env — "
-                "one is required for compute_profile_from_snowflake."
+                "Neither SNOWFLAKE_PRIVATE_KEY_B64 nor SNOWFLAKE_PASSWORD set in .env. "
+                "One is required for compute_profile_from_snowflake."
             )
         kwargs["password"] = pwd
     return snowflake.connector.connect(**kwargs)
@@ -2712,7 +2712,7 @@ def compute_profile_from_snowflake(
     sc = schema   or SNOWFLAKE_DEFAULT_SCHEMA
     if not db or not sc:
         raise RuntimeError(
-            f"No database/schema specified for {object_name!r} — the schema map should "
+            f"No database/schema specified for {object_name!r}. The schema map should "
             f"supply these, or set SNOWFLAKE_DATABASE / SNOWFLAKE_SCHEMA."
         )
     full_table = f"{_quote_ident(db)}.{_quote_ident(sc)}.{_quote_ident(object_name)}"

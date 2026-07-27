@@ -204,7 +204,7 @@ def _v3_base_url() -> str:
     env = _read_env()
     url = env.get("IDMC_V3_BASE_URL") or env.get("IDMC_SERVER_URL", "")
     if not url:
-        raise RuntimeError("IDMC_V3_BASE_URL (or IDMC_SERVER_URL) not set in .env — run v3 login first.")
+        raise RuntimeError("IDMC_V3_BASE_URL (or IDMC_SERVER_URL) not set in .env. Run v3 login first.")
     return url
 
 
@@ -322,7 +322,7 @@ def _llm_call(system_prompt: str, user_msg: str, temperature: float = 0.2,
     try:
         import anthropic
     except ImportError:
-        raise RuntimeError("anthropic package not installed — run: pip install anthropic")
+        raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
 
     api_key = _read_env().get("ANTHROPIC_API_KEY") or ANTHROPIC_API_KEY
     if not api_key:
@@ -379,7 +379,7 @@ def _llm_json(system_prompt: str, user_msg: str, model: str | None = None) -> An
         except json.JSONDecodeError as e:
             raise RuntimeError(
                 f"_llm_json: response was not valid JSON after one repair attempt "
-                f"(likely truncated at the {_LLM_MAX_TOKENS}-token cap — raise LLM_MAX_TOKENS). "
+                f"(likely truncated at the {_LLM_MAX_TOKENS}-token cap: raise LLM_MAX_TOKENS). "
                 f"Parse error: {e}. Response length: initial={len(raw)} chars, repair={len(raw2)} chars. "
                 f"Tail of repair attempt: ...{text2[-200:]!r}"
             ) from e
@@ -3789,7 +3789,7 @@ def govern(
                 "catalog_source_id": catalog_source_id,
                 "trigger_error": str(e),
                 "note": (
-                    "The MCC Data Quality scan could not be triggered — see the error above for the exact reason. "
+                    "The MCC Data Quality scan could not be triggered. See the error above for the exact reason. "
                     "Interim DQ scores (95%) from the previous step are already published to CDGC and remain visible."
                 ),
             }
@@ -4149,7 +4149,7 @@ def create_cdmp_data_collection(
     if not category_id:
         category_id = (state.get("cdmp_category") or {}).get("id", "")
     if not category_id:
-        return {"status": "failed", "error": "No category_id — run create_cdmp_category first."}
+        return {"status": "failed", "error": "No category_id: run create_cdmp_category first."}
 
     asset_name = (state.get("cdmp_data_asset") or {}).get("name", "")
     if not asset_name:
@@ -4158,7 +4158,7 @@ def create_cdmp_data_collection(
         asset_name = tables[0].get("name", "Governed Dataset") if tables else "Governed Dataset"
 
     if not name:
-        name = f"{asset_name} — Governed Dataset"
+        name = f"{asset_name} - Governed Dataset"
     if not description:
         dq_dims = (state.get("propagate_scores") or {}).get("dimensions", [])
         score_note = f"DQ scored on {', '.join(dq_dims)}." if dq_dims else ""
@@ -4221,7 +4221,7 @@ def create_cdmp_data_collection(
         }
         log.info("create_cdmp_data_collection: asset-collection link http=%s", lr.status_code)
     elif not asset_id:
-        asset_link_status = {"status": "skipped", "note": "No asset_id in state — run create_cdmp_data_asset first."}
+        asset_link_status = {"status": "skipped", "note": "No asset_id in state: run create_cdmp_data_asset first."}
 
     marketplace_url = f"https://cdmp-app.dm-us.informaticacloud.com/data-collections/{collection_id}"
 
@@ -4262,7 +4262,7 @@ def publish_cdmp_collection(
     if not collection_id:
         collection_id = (state.get("cdmp_collection") or {}).get("id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
 
     r = _cdmp_request("GET", f"api/v2/data-collections/{collection_id}")
     log.info("publish_cdmp_collection: verify id=%s http=%s", collection_id, r.status_code)
@@ -4395,7 +4395,7 @@ def create_delivery_template(
 
     collection_id = (state.get("cdmp_collection") or {}).get("id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
 
     ctx = _cdmp_asset_context(state)
     asset_name = ctx["asset_name"]
@@ -4405,7 +4405,7 @@ def create_delivery_template(
     source_path = ctx["source_path"]
 
     if not name:
-        name = f"{asset_name} — Download Delivery"
+        name = f"{asset_name} - Download Delivery"
 
     # --- a. Check/Create Delivery Format (CSV) ---
     format_id = ""
@@ -4561,13 +4561,13 @@ def create_terms_of_use(
     _dt = state.get("delivery_template") or {}
     collection_id = (state.get("cdmp_collection") or {}).get("id", "") or _dt.get("collection_id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
 
     asset_name  = (state.get("cdmp_data_asset") or {}).get("name", "Governed Dataset")
     domain_name = (state.get("cdmp_data_asset") or {}).get("domain", "")
 
     if not name:
-        name = f"{asset_name} — Terms of Use"
+        name = f"{asset_name} - Terms of Use"
     if not content:
         content = (
             f"By accessing the {asset_name} dataset from the {domain_name} domain, you agree to: "
@@ -4671,11 +4671,11 @@ def create_delivery_target(
     delivery_template_id = delivery_template.get("id", "")
     collection_id = (state.get("cdmp_collection") or {}).get("id", "") or delivery_template.get("collection_id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
     method_id = delivery_template.get("method_id", "")
     format_id = delivery_template.get("format_id", "")
     if not delivery_template_id:
-        return {"status": "failed", "error": "No delivery_template_id — run create_delivery_template first."}
+        return {"status": "failed", "error": "No delivery_template_id: run create_delivery_template first."}
 
     ctx = _cdmp_asset_context(state)
     asset_name = ctx["asset_name"]
@@ -4683,7 +4683,7 @@ def create_delivery_target(
     source_path = ctx["source_path"]
 
     if not name:
-        name = f"{asset_name} — Download Target"
+        name = f"{asset_name} - Download Target"
 
     target_body = {
         "name":                  name,
@@ -4759,7 +4759,7 @@ def create_consumer_access(
     _dt = state.get("delivery_template") or {}
     collection_id = (state.get("cdmp_collection") or {}).get("id", "") or _dt.get("collection_id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
 
     delivery_target_id = (state.get("delivery_target") or {}).get("id", "")
     if not delivery_target_id:
@@ -4769,7 +4769,7 @@ def create_consumer_access(
     context_ids: dict[str, str] = (state.get("cdmp_usage_contexts") or {}).get("context_ids", {})
     usage_context_id = context_ids.get("Analytics") or (next(iter(context_ids.values()), "") if context_ids else "")
     if not usage_context_id:
-        return {"status": "failed", "error": "No usage_context_id — run create_cdmp_usage_contexts first."}
+        return {"status": "failed", "error": "No usage_context_id: run create_cdmp_usage_contexts first."}
 
     if not consumer_email:
         env = _read_env()
@@ -4853,7 +4853,7 @@ def approve_consumer_order() -> dict[str, Any]:
     marketplace_url = access.get("marketplace_url", "")
 
     if not order_id:
-        return {"status": "failed", "error": "approve_consumer_order · NO_ORDER: no consumer order to approve — place one first (step 15, create_consumer_access)."}
+        return {"status": "failed", "error": "approve_consumer_order · NO_ORDER: no consumer order to approve. Place one first (step 15, create_consumer_access)."}
 
     delivery_target_id = (state.get("delivery_target") or {}).get("id", "")
     _dt = state.get("delivery_template") or {}
@@ -4901,7 +4901,7 @@ def verify_consumer_access() -> dict[str, Any]:
     order_ref = access.get("order_ref", "")
     marketplace_url = access.get("marketplace_url", "")
     if not order_id:
-        return {"status": "failed", "error": "verify_consumer_access · NO_ORDER: no consumer order to verify — place one first (step 15, create_consumer_access)."}
+        return {"status": "failed", "error": "verify_consumer_access · NO_ORDER: no consumer order to verify. Place one first (step 15, create_consumer_access)."}
     r = _cdmp_request("GET", f"api/v1/orders/{order_id}")
     if r.status_code != 200:
         return {"status": "failed", "http_status": r.status_code, "error": r.text[:300]}
@@ -4930,7 +4930,7 @@ def withdraw_consumer_access() -> dict[str, Any]:
     order_ref = access.get("order_ref", "")
     marketplace_url = access.get("marketplace_url", "")
     if not order_id:
-        return {"status": "failed", "error": "withdraw_consumer_access · NO_ORDER: no consumer order to withdraw — place one first (step 15, create_consumer_access)."}
+        return {"status": "failed", "error": "withdraw_consumer_access · NO_ORDER: no consumer order to withdraw. Place one first (step 15, create_consumer_access)."}
 
     # Find consumerAccess ID — the real withdraw endpoint is PUT /api/v1/consumerAccess/{id}/status
     collection_id = access.get("collection_id", "")
@@ -5088,7 +5088,7 @@ def _generate_asset_collection_link_csv(state: dict) -> str:
     """Generate an Informatica CDMP Data Asset - Data Collection CSV template string."""
     ctx = _cdmp_asset_context(state)
     asset_name      = ctx["asset_name"]
-    collection_name = f"{asset_name} — Governed Dataset"
+    collection_name = f"{asset_name} - Governed Dataset"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5113,7 +5113,7 @@ def _generate_delivery_template_csv(state: dict) -> str:
     ])
     writer.writerow([
         f"{asset_name}-delivery",                    # Reference ID
-        f"{asset_name} — Download Delivery",         # Name
+        f"{asset_name} - Download Delivery",         # Name
         f"Download delivery template for {asset_name}",  # Description
         "Active",                                    # Status
         "Automated",                                 # Delivery Type
@@ -5140,7 +5140,7 @@ def _generate_terms_of_use_csv(state: dict) -> str:
     ])
     writer.writerow([
         f"{asset_name}-terms",              # Reference ID
-        f"{asset_name} — Terms of Use",     # Name
+        f"{asset_name} - Terms of Use",     # Name
         f"Usage terms for {asset_name}",    # Description
         "Active",                           # Status
         "Standard",                         # Type
@@ -5153,8 +5153,8 @@ def _generate_tou_collection_link_csv(state: dict) -> str:
     """Generate an Informatica CDMP Terms of Use - Data Collection CSV template string."""
     ctx = _cdmp_asset_context(state)
     asset_name      = ctx["asset_name"]
-    collection_name = f"{asset_name} — Governed Dataset"
-    tou_name        = f"{asset_name} — Terms of Use"
+    collection_name = f"{asset_name} - Governed Dataset"
+    tou_name        = f"{asset_name} - Terms of Use"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5169,9 +5169,9 @@ def _generate_delivery_target_csv(state: dict) -> str:
     asset_name      = ctx["asset_name"]
     connection      = ctx["connection"]
     source_path     = ctx["source_path"]
-    collection_name = f"{asset_name} — Governed Dataset"
-    delivery_name   = f"{asset_name} — Download Delivery"
-    target_name     = f"{asset_name} — Download Target"
+    collection_name = f"{asset_name} - Governed Dataset"
+    delivery_name   = f"{asset_name} - Download Delivery"
+    target_name     = f"{asset_name} - Download Target"
 
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
@@ -5269,7 +5269,7 @@ def link_asset_to_collection(
 
     collection_id = (state.get("cdmp_collection") or {}).get("id", "")
     if not collection_id:
-        return {"status": "failed", "error": "No collection_id — run create_cdmp_data_collection first."}
+        return {"status": "failed", "error": "No collection_id: run create_cdmp_data_collection first."}
 
     ctx = _cdmp_asset_context(state)
     if asset_name:
@@ -5281,7 +5281,7 @@ def link_asset_to_collection(
 
     ctx   = _cdmp_asset_context(state)
     aname = ctx["asset_name"]
-    cname = f"{aname} — Governed Dataset"
+    cname = f"{aname} - Governed Dataset"
 
     link_csv   = _generate_asset_collection_link_csv(state)
     csv_upload = _cdmp_upload_template(link_csv, f"{aname}_asset_collection_link.csv")

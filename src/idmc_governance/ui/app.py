@@ -125,7 +125,7 @@ def _as_http_error(e: Exception) -> HTTPException:
     if any(m in low for m in _SESSION_EXPIRY_MARKERS):
         return HTTPException(
             status_code=401,
-            detail=f"IDMC session expired — re-authenticate and retry. ({msg[:300]})",
+            detail=f"IDMC session expired. Re-authenticate and retry. ({msg[:300]})",
         )
     return HTTPException(status_code=500, detail=msg)
 
@@ -285,7 +285,7 @@ async def step_profile(req: ProfileStepRequest):
     rt = _env_value("IDMC_DQ_RUNTIME_ENV_ID")
     if not conn or not rt:
         raise HTTPException(422, "Informatica profiling needs IDMC_DQ_CONNECTION_ID and "
-                                 "IDMC_DQ_RUNTIME_ENV_ID in .env — or use 'Compute locally'.")
+                                 "IDMC_DQ_RUNTIME_ENV_ID in .env, or use 'Compute locally'.")
     args = {"connection_id": conn, "object_name": req.object_name, "runtime_environment_id": rt}
     # No auto-create fallback. run_profile's "No profile defined for connection=…
     # object=…" is an accurate per-table prerequisite — the v2 Snowflake connector
@@ -354,7 +354,7 @@ async def step_get_profile_results(req: ProfileRunRequest):
         if resolved and req.object_name and resolved.lower() != req.object_name.strip().lower():
             raise HTTPException(409, f"Profiling service returned results for '{resolved}', not the "
                                      f"requested '{req.object_name}'. The run for this table has not "
-                                     f"completed — re-run once it has.")
+                                     f"completed. Re-run once it has.")
         out["profile_path"] = "cdgc_catalog"
     return out
 
@@ -390,7 +390,7 @@ async def step_recommend_rules(req: RecommendRulesRequest):
     entry = _read_profile_state().get(_profile_key(req.connection, req.schema, req.table))
     profile = (entry or {}).get("profile") or {}
     if not profile.get("columns"):
-        raise HTTPException(422, "No profile found for this table — run Profile Data (step 3) first. "
+        raise HTTPException(422, "No profile found for this table. Run Profile Data (step 3) first. "
                                  "recommend_dq_rules is pure reasoning over a profile payload and "
                                  "produces nothing useful from an empty one.")
     return await _bridge(GOVERNANCE_ENGINE_URL, "recommend_dq_rules", {
@@ -760,7 +760,7 @@ async def monitor_list_alerts():
         except Exception:  # noqa: BLE001
             alerts = []
     return {"alerts": alerts, "count": len(alerts), "alerts_path": str(p),
-            "storage": "local — evaluated by our scheduler, not registered in CDGC"}
+            "storage": "local: evaluated by our scheduler, not registered in CDGC"}
 
 
 # ── Profile session state (spec Phase 0 item 8) ───────────────────────────────
@@ -1101,7 +1101,7 @@ class ApplyCurationRequest(BaseModel):
 async def step_apply_curation_links(req: ApplyCurationRequest):
     """Gate 2 commit — writes exactly the approved column-to-term links."""
     if not req.links:
-        raise HTTPException(422, "Nothing approved — select at least one link.")
+        raise HTTPException(422, "Nothing approved. Select at least one link.")
     return await _bridge(AI_GOVERNANCE_URL, "apply_curation_links", {"links": req.links})
 
 
