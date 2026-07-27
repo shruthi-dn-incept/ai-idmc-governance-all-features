@@ -513,7 +513,7 @@ function ScanResult({ data, scanSource, scanSchema, scanTable }) {
     <div className="space-y-4">
       {/* Summary banner */}
       <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700 font-medium flex flex-wrap items-center gap-2">
-        <span>Scanned <strong>{scanned}</strong> {scanned === 1 ? "table" : "tables"}{totalInSchema > scanned ? ` of ${totalInSchema.toLocaleString()}` : ""} in <span className="font-mono">{scanSchema === "__ALL_SCHEMAS__" ? "all schemas" : (scanSchema || scanTables[0]?.schema || "the selected schema")}</span> — <strong>{elapsed}s</strong></span>
+        <span>Scanned <strong>{scanned}</strong> {scanned === 1 ? "table" : "tables"}{totalInSchema > scanned ? ` of ${totalInSchema.toLocaleString()}` : ""} in <span className="font-mono">{scanSchema === "__ALL_SCHEMAS__" ? "all schemas" : (scanSchema || scanTables[0]?.schema || "the selected schema")}</span>, <strong>{elapsed}s</strong></span>
         {estLabel && totalInSchema > scanned && (
           <span className="text-green-600 text-xs bg-green-100 px-2 py-0.5 rounded">
             {scanSchema === "__ALL_SCHEMAS__" ? "All schemas" : "Full schema"}: {estLabel} ({totalInSchema.toLocaleString()} tables)
@@ -533,7 +533,7 @@ function ScanResult({ data, scanSource, scanSchema, scanTable }) {
           {/* Level 2 — Schema */}
           <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-2 flex items-center gap-2">
             <span className="text-xs text-indigo-400 font-medium uppercase tracking-wider">Schema</span>
-            <span className="text-xs font-mono font-semibold text-indigo-700">{scanSchema || scanTables[0]?.schema || "—"}</span>
+            <span className="text-xs font-mono font-semibold text-indigo-700">{scanSchema || scanTables[0]?.schema || "-"}</span>
           </div>
 
           {/* Level 3+4 — Tables with columns */}
@@ -546,7 +546,7 @@ function ScanResult({ data, scanSource, scanSchema, scanTable }) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-400 font-medium">TABLE</span>
-                      <span className="text-sm font-mono font-bold text-slate-800">{c.table || tblMeta.name || "—"}</span>
+                      <span className="text-sm font-mono font-bold text-slate-800">{c.table || tblMeta.name || "-"}</span>
                     </div>
                     <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{c.column_count} columns</span>
                   </div>
@@ -575,8 +575,8 @@ function ScanResult({ data, scanSource, scanSchema, scanTable }) {
                             {detail.map((col, ci) => (
                               <tr key={ci}>
                                 <td className="px-3 py-1.5 font-mono text-xs text-slate-700">{col.name}</td>
-                                <td className="px-3 py-1.5 font-mono text-xs text-slate-500">{col.data_type ? col.data_type : <span className="text-slate-300">—</span>}</td>
-                                <td className="px-3 py-1.5 text-xs text-slate-300">—</td>
+                                <td className="px-3 py-1.5 font-mono text-xs text-slate-500">{col.data_type ? col.data_type : <span className="text-slate-400">-</span>}</td>
+                                <td className="px-3 py-1.5 text-xs text-slate-400">-</td>
                                 <td className="px-3 py-1.5 text-xs text-slate-300">none</td>
                               </tr>
                             ))}
@@ -638,7 +638,7 @@ function TaxonomyResult({ data, onGoToStep }) {
         <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Proposed taxonomy</span>
           {grounded && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-bold">PROFILE INFORMED</span>}
-          <span className="ml-auto text-xs text-slate-400">{s.domain_count || domains.length} domains · {s.subdomain_count || "—"} subdomains · {s.term_count || "—"} terms</span>
+          <span className="ml-auto text-xs text-slate-400">{s.domain_count || domains.length} domains · {s.subdomain_count || "-"} subdomains · {s.term_count || "-"} terms</span>
         </div>
         <div className="p-4 space-y-3">
           {domains.map(d => (
@@ -822,7 +822,7 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
               <div className="flex items-start gap-3">
                 <span className="text-xs text-slate-400 w-20 shrink-0 pt-0.5 font-medium">System</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-slate-800">{sys.name || "—"}</div>
+                  <div className="text-sm font-semibold text-slate-800">{sys.name || "-"}</div>
                   {sys.id && <div className="text-xs font-mono text-slate-400 truncate">{sys.id}</div>}
                   {sys.status && <span className={`inline-block text-xs px-1.5 py-0.5 rounded mt-0.5 font-medium ${sys.status.includes("created") ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{sys.status}</span>}
                 </div>
@@ -831,7 +831,7 @@ function DomainStructureResult({ data, domainItems, domainSelected }) {
               <div className="flex items-start gap-3">
                 <span className="text-xs text-slate-400 w-20 shrink-0 pt-0.5 font-medium">Dataset</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-slate-800">{ds.name || "—"}</div>
+                  <div className="text-sm font-semibold text-slate-800">{ds.name || "-"}</div>
                   {ds.id && <div className="text-xs font-mono text-slate-400 truncate">{ds.id}</div>}
                   {ds.status && <span className={`inline-block text-xs px-1.5 py-0.5 rounded mt-0.5 font-medium ${ds.status.includes("created") ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{ds.status}</span>}
                 </div>
@@ -991,8 +991,8 @@ function SystemDatasetResult({ data }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="System"  value={r.system?.name || "—"} color="text-slate-700"/>
-        <SummaryCard label="Dataset" value={(r.dataset?.name || "—").slice(0, 28) + (r.dataset?.name?.length > 28 ? "…" : "")} color="text-slate-700"/>
+        <SummaryCard label="System"  value={r.system?.name || "-"} color="text-slate-700"/>
+        <SummaryCard label="Dataset" value={(r.dataset?.name || "-").slice(0, 28) + (r.dataset?.name?.length > 28 ? "…" : "")} color="text-slate-700"/>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <SummaryCard label="Columns linked" value={r.data_elements?.linked?.length || 0}/>
@@ -1092,12 +1092,12 @@ function DQRulesResult({ data }) {
             </div>
             <DataTable
               columns={[
-                { key: "rule",       label: "Rule",       render: r => <span className="font-mono font-medium text-slate-700">{r._rule || "—"}</span> },
+                { key: "rule",       label: "Rule",       render: r => <span className="font-mono font-medium text-slate-700">{r._rule || "-"}</span> },
                 { key: "dimension",  label: "Dimension",  render: r => <DimChip dim={r.dimension}/> },
-                { key: "column",     label: "Column",     render: r => <span className="font-mono text-slate-600">{r.column || "—"}</span> },
+                { key: "column",     label: "Column",     render: r => <span className="font-mono text-slate-600">{r.column || "-"}</span> },
                 { key: "occurrence", label: "Occurrence", render: r => r.occurrence_id
                     ? <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 text-xs font-mono">{r.occurrence_id}</span>
-                    : <span className="text-slate-300">—</span> },
+                    : <span className="text-slate-400">-</span> },
               ]}
               rows={rows}
             />
@@ -1116,9 +1116,9 @@ function ScoresResult({ data }) {
 
   // Merge score http_status with DQRO metadata (plan next_actions carry column+dimension)
   const rows = scores.map((s, i) => ({
-    name:      s.name      || `DQ_${s.column}_${s.dimension}` || "—",
-    column:    s.column    || "—",
-    dimension: s.dimension || "—",
+    name:      s.name      || `DQ_${s.column}_${s.dimension}` || "-",
+    column:    s.column    || "-",
+    dimension: s.dimension || "-",
     score:     s.value     != null ? `${s.value}%` : "95%",
     status:    s.http_status === 200 ? "✓" : `HTTP ${s.http_status}`,
     ok:        s.http_status === 200,
@@ -1183,10 +1183,10 @@ function ScoresResult({ data }) {
 }
 
 function MccScanResult({ data }) {
-  const jobId    = data?.result?.job_id || data?.job_id || "—";
+  const jobId    = data?.result?.job_id || data?.job_id || "-";
   const status   = data?.result?.status || data?.status || "SUBMITTED";
   const caps     = data?.result?.capabilities || ["Data Quality"];
-  const source   = data?.result?.catalog_source || "—";
+  const source   = data?.result?.catalog_source || "-";
   const tracking = data?.result?.tracking_uri || data?.tracking_uri || "";
   const note     = data?.result?.note || "";
   const isSkipped = status === "skipped";
@@ -1303,8 +1303,8 @@ function PublishMarketplaceFullResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-slate-500"}/>
-        <SummaryCard label="HTTP"   value={data?.http_status || "—"} color={ok ? "text-emerald-600" : "text-slate-500"}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={ok ? "text-emerald-600" : "text-slate-500"}/>
+        <SummaryCard label="HTTP"   value={data?.http_status || "-"} color={ok ? "text-emerald-600" : "text-slate-500"}/>
       </div>
       {data?.marketplace_url && (
         <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-lg border border-slate-200">
@@ -1355,17 +1355,17 @@ function CdmpCategoryResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
-        <SummaryCard label="HTTP"   value={data?.http_status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="HTTP"   value={data?.http_status || "-"} color={ok ? "text-emerald-600" : "text-red-500"}/>
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Category Name</span>
-          <span className="text-xs font-medium text-slate-700">{data?.name || "—"}</span>
+          <span className="text-xs font-medium text-slate-700">{data?.name || "-"}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Category ID</span>
-          <span className="text-xs font-mono text-brand break-all">{data?.id || "—"}</span>
+          <span className="text-xs font-mono text-brand break-all">{data?.id || "-"}</span>
         </div>
       </div>
       {data?.error && <div className="bg-red-50 border border-red-200 rounded-lg p-3"><pre className="text-xs text-red-700 whitespace-pre-wrap">{data.error}</pre></div>}
@@ -1382,7 +1382,7 @@ function UploadBadge({ upload, label }) {
     ? `✓ Uploaded via API (HTTP ${upload.http_status})`
     : saved
       ? `📁 Saved locally: import via CDMP UI`
-      : `✗ ${upload.status} (HTTP ${upload.http_status || "—"})`;
+      : `✗ ${upload.status} (HTTP ${upload.http_status || "-"})`;
   return (
     <div className="flex items-start gap-2">
       <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">{label}</span>
@@ -1402,21 +1402,21 @@ function CdmpDataAssetResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
-        <SummaryCard label="Asset ID" value={data?.id ? data.id.slice(0,8)+"..." : "—"} color={ok ? "text-brand" : "text-slate-400"}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="Asset ID" value={data?.id ? data.id.slice(0,8)+"..." : "-"} color={ok ? "text-brand" : "text-slate-400"}/>
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Asset Name</span>
-          <span className="text-xs font-medium text-slate-700">{data?.name || "—"}</span>
+          <span className="text-xs font-medium text-slate-700">{data?.name || "-"}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Source</span>
-          <span className="text-xs text-slate-600">{data?.source || "—"}</span>
+          <span className="text-xs text-slate-600">{data?.source || "-"}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Type</span>
-          <span className="text-xs text-slate-600">{data?.type || "—"}</span>
+          <span className="text-xs text-slate-600">{data?.type || "-"}</span>
         </div>
       </div>
       {notFound && (
@@ -1435,21 +1435,21 @@ function CdmpCollectionResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status"      value={data?.status || "—"}      color={ok ? "text-emerald-600" : "text-red-500"}/>
-        <SummaryCard label="HTTP"        value={data?.http_status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="Status"      value={data?.status || "-"}      color={ok ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="HTTP"        value={data?.http_status || "-"} color={ok ? "text-emerald-600" : "text-red-500"}/>
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Collection Name</span>
-          <span className="text-xs font-medium text-slate-700">{data?.name || "—"}</span>
+          <span className="text-xs font-medium text-slate-700">{data?.name || "-"}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Collection ID</span>
-          <span className="text-xs font-mono text-brand break-all">{data?.id || "—"}</span>
+          <span className="text-xs font-mono text-brand break-all">{data?.id || "-"}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">External ID</span>
-          <span className="text-xs font-mono text-slate-600">{data?.externalId || "—"}</span>
+          <span className="text-xs font-mono text-slate-600">{data?.externalId || "-"}</span>
         </div>
         {data?.marketplace_url && (
           <div className="flex items-start gap-2">
@@ -1468,13 +1468,13 @@ function PublishMarketplaceResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status" value={data?.status || "—"} color={published ? "text-emerald-600" : "text-red-500"}/>
-        <SummaryCard label="HTTP"   value={data?.http_status || "—"} color={published ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={published ? "text-emerald-600" : "text-red-500"}/>
+        <SummaryCard label="HTTP"   value={data?.http_status || "-"} color={published ? "text-emerald-600" : "text-red-500"}/>
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Collection ID</span>
-          <span className="text-xs font-mono text-brand break-all">{data?.collection_id || "—"}</span>
+          <span className="text-xs font-mono text-brand break-all">{data?.collection_id || "-"}</span>
         </div>
         {data?.marketplace_url && (
           <div className="flex items-start gap-2">
@@ -1503,13 +1503,13 @@ function PreparedStepResult({ data, label, extraFields = [] }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Status" value={data?.status || "—"} color={ok ? "text-emerald-600" : "text-red-500"}/>
-        {extraFields[0] && <SummaryCard label={extraFields[0].label} value={data?.[extraFields[0].key] || "—"} color="text-brand"/>}
+        <SummaryCard label="Status" value={data?.status || "-"} color={ok ? "text-emerald-600" : "text-red-500"}/>
+        {extraFields[0] && <SummaryCard label={extraFields[0].label} value={data?.[extraFields[0].key] || "-"} color="text-brand"/>}
       </div>
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Name</span>
-          <span className="text-xs text-slate-700">{data?.name || "—"}</span>
+          <span className="text-xs text-slate-700">{data?.name || "-"}</span>
         </div>
         {data?.collection_id && (
           <div className="flex items-start gap-2">
@@ -1573,12 +1573,12 @@ function ConsumerAccessResult({ data, onAccessAction }) {
     const cls = u === "COMPLETE" ? "bg-emerald-100 text-emerald-700 border-emerald-300"
       : u === "PENDING" ? "bg-amber-100 text-amber-700 border-amber-300"
       : "bg-slate-100 text-slate-600 border-slate-300";
-    return <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cls}`}>{s || "—"}</span>;
+    return <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cls}`}>{s || "-"}</span>;
   };
   // The step returns one placed order; render it as a lifecycle row. REQUESTED is
   // not in the payload — show it muted rather than synthesise a timestamp.
   const rows = (data?.order_id || data?.order_ref) ? [{
-    consumer:  data?.consumer_email || data?.consumer || "—",
+    consumer:  data?.consumer_email || data?.consumer || "-",
     orderRef:  data?.order_ref || (data?.order_id ? String(data.order_id).slice(0, 8) : ""),
     requested: data?.requested_at || data?.requested || null,
     status,
@@ -1594,13 +1594,13 @@ function ConsumerAccessResult({ data, onAccessAction }) {
           columns={[
             { key: "consumer", label: "Consumer", render: r => (
                 <div><div className="font-mono text-slate-700">{r.consumer}</div>{r.orderRef && <div className="text-[10px] text-slate-400">order {r.orderRef}</div>}</div>) },
-            { key: "requested", label: "Requested", render: r => r.requested ? String(r.requested) : <span className="text-slate-300">—</span> },
+            { key: "requested", label: "Requested", render: r => r.requested ? String(r.requested) : <span className="text-slate-400">-</span> },
             { key: "state", label: "State", render: r => stateBadge(r.status) },
             { key: "action", label: "Action", render: r => {
                 const u = (r.status || "").toUpperCase();
                 if (u === "PENDING")  return <button onClick={() => onAccessAction && onAccessAction("approve")}  className="px-2 py-0.5 rounded-md text-xs font-semibold border border-brand text-brand hover:bg-indigo-50">Approve</button>;
                 if (u === "COMPLETE") return <button onClick={() => onAccessAction && onAccessAction("withdraw")} className="px-2 py-0.5 rounded-md text-xs font-semibold border border-red-300 text-red-600 hover:bg-red-50">Withdraw</button>;
-                return <span className="text-slate-300">—</span>;
+                return <span className="text-slate-400">-</span>;
               } },
           ]}
           rows={rows}
@@ -1610,7 +1610,7 @@ function ConsumerAccessResult({ data, onAccessAction }) {
       <div className="bg-slate-100 border border-slate-300 rounded-lg p-4 space-y-2">
         <div className="flex items-start gap-2">
           <span className="text-xs text-slate-400 w-28 shrink-0 font-medium">Collection ID</span>
-          <span className="text-xs font-mono text-brand break-all">{data?.collection_id || "—"}</span>
+          <span className="text-xs font-mono text-brand break-all">{data?.collection_id || "-"}</span>
         </div>
         {data?.marketplace_url && (
           <div className="flex items-start gap-2">
@@ -1673,7 +1673,7 @@ function ConfirmModal({ confirm, onClose, onConfirm }) {
         </div>
         <div className="px-5 py-4">
           <ul className="text-sm text-slate-600 space-y-1.5">
-            {consequences.map((c, i) => <li key={i} className="flex gap-2"><span className="text-slate-300">—</span><span>{c}</span></li>)}
+            {consequences.map((c, i) => <li key={i} className="flex gap-2"><span className="text-slate-300">•</span><span>{c}</span></li>)}
           </ul>
           {dual && (
             <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mt-3 text-xs text-violet-800">
@@ -1703,8 +1703,8 @@ function VerifyAccessResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Order" value={data?.order_ref || data?.order_id?.slice(0,8) || "—"} color={statusColor}/>
-        <SummaryCard label="Status" value={data?.status || "—"} color={statusColor}/>
+        <SummaryCard label="Order" value={data?.order_ref || data?.order_id?.slice(0,8) || "-"} color={statusColor}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={statusColor}/>
       </div>
       {data?.marketplace_url && (
         <div className="bg-slate-100 border border-slate-300 rounded-lg px-4 py-2 flex items-center gap-2">
@@ -1750,8 +1750,8 @@ function WithdrawAccessResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Order" value={data?.order_ref || data?.order_id?.slice(0,8) || "—"} color={withdrawn ? "text-slate-600" : "text-amber-500"}/>
-        <SummaryCard label="Status" value={data?.status || "—"} color={withdrawn ? "text-slate-600" : "text-amber-500"}/>
+        <SummaryCard label="Order" value={data?.order_ref || data?.order_id?.slice(0,8) || "-"} color={withdrawn ? "text-slate-600" : "text-amber-500"}/>
+        <SummaryCard label="Status" value={data?.status || "-"} color={withdrawn ? "text-slate-600" : "text-amber-500"}/>
       </div>
       {data?.marketplace_url && (
         <div className="bg-slate-100 border border-slate-300 rounded-lg px-4 py-2 flex items-center gap-2">
@@ -1866,16 +1866,16 @@ function DataQualityResult({ data }) {
 function PublishGovernanceResult({ data }) {
   const r = data?.result || data || {};
   const ok = r.job_id || r.scan_triggered;
-  const jobId = r.job_id || "—";
-  const source = r.catalog_source || "—";
-  const status = r.status || (ok ? "Triggered" : "—");
+  const jobId = r.job_id || "-";
+  const source = r.catalog_source || "-";
+  const status = r.status || (ok ? "Triggered" : "-");
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <SummaryCard label="Status"         value={status} color={ok ? "text-emerald-600" : "text-red-500"}/>
         <SummaryCard label="Catalog Source" value={source} color="text-slate-600"/>
       </div>
-      {jobId !== "—" && (
+      {jobId !== "-" && (
         <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-lg border border-slate-200">
           <span className="text-xs text-slate-400 font-medium shrink-0">Job ID</span>
           <span className="text-xs font-mono text-slate-600 break-all">{jobId}</span>
@@ -1899,7 +1899,7 @@ function PublishGovernanceResult({ data }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function DimChip({ dim }) {
-  return <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs">{dim || "—"}</span>;
+  return <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs">{dim || "-"}</span>;
 }
 
 function SevBadge({ severity }) {
@@ -1921,7 +1921,7 @@ function DataTable({ columns, rows, empty }) {
         <tbody className="divide-y divide-slate-100 bg-white">
           {rows.map((r, i) => (
             <tr key={i} className="hover:bg-slate-50">
-              {columns.map(c => <td key={c.key} className="px-3 py-2 text-slate-700 align-top">{c.render ? c.render(r) : (r[c.key] ?? "—")}</td>)}
+              {columns.map(c => <td key={c.key} className="px-3 py-2 text-slate-700 align-top">{c.render ? c.render(r) : (r[c.key] ?? "-")}</td>)}
             </tr>
           ))}
         </tbody>
@@ -1931,7 +1931,7 @@ function DataTable({ columns, rows, empty }) {
 }
 
 function fmtPct(v) {
-  if (v == null || v === "") return "—";
+  if (v == null || v === "") return "-";
   const n = Number(v);
   if (Number.isNaN(n)) return String(v);
   return (n <= 1 ? n * 100 : n).toFixed(1) + "%";
@@ -2054,7 +2054,7 @@ function LineageTree({ data }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-mono font-semibold text-slate-800 truncate" title={data?.asset?.name}>{data?.asset?.name || "—"}</span>
+        <span className="text-sm font-mono font-semibold text-slate-800 truncate" title={data?.asset?.name}>{data?.asset?.name || "-"}</span>
         <span className="text-xs text-slate-400 shrink-0">{t.upCount} up · {t.downCount} down</span>
       </div>
       {total === 0
@@ -2113,7 +2113,7 @@ function ImpactReportResult({ data }) {
           <DataTable
             columns={[
               { key: "name", label: "Downstream", render: r => <span className="font-mono font-medium text-slate-700 truncate inline-block max-w-[220px]" title={r.name}>{r.name || "?"}</span> },
-              { key: "min_distance", label: "Hops", render: r => <span className="text-slate-500">{r.min_distance ?? "—"}</span> },
+              { key: "min_distance", label: "Hops", render: r => <span className="text-slate-500">{r.min_distance ?? "-"}</span> },
               { key: "severity", label: "Severity", render: r => <SevBadge severity={r.severity}/> },
             ]}
             rows={rows}
@@ -2165,7 +2165,7 @@ function SuggestTermsResult({ data }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label="Asset" value={data?.asset || "—"} color="text-slate-700"/>
+        <SummaryCard label="Asset" value={data?.asset || "-"} color="text-slate-700"/>
         <SummaryCard label="Suggestions" value={suggestions.length}/>
       </div>
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden divide-y divide-slate-100 max-h-96 overflow-y-auto scrollbar-thin">
@@ -2257,7 +2257,7 @@ function ScorecardResult({ data }) {
   // that dimension's rules. Composite delta = mean trend over all scored rules.
   const byDim = {};
   scores.forEach(s => {
-    const d = s.dimension || "—";
+    const d = s.dimension || "-";
     (byDim[d] = byDim[d] || { vs: [], ts: [] });
     const v = Number(s.value), t = Number(s.score_trend);
     if (Number.isFinite(v)) byDim[d].vs.push(v);
@@ -2268,7 +2268,7 @@ function ScorecardResult({ data }) {
   const cards = [{ label: "Composite", score: composite, delta: mean(allTrends) }, ...dimCards];
   const StatCard = ({ label, score, delta }) => (
     <div className="bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 flex flex-col gap-0.5 shadow-sm overflow-hidden">
-      <span className={`text-lg font-bold ${band(score)}`}>{score != null ? score.toFixed(1) + "%" : "—"}</span>
+      <span className={`text-lg font-bold ${band(score)}`}>{score != null ? score.toFixed(1) + "%" : "-"}</span>
       <span className="text-xs text-slate-400 uppercase tracking-wider font-medium truncate" title={label}>{label}</span>
       <span className={`text-xs font-semibold ${delta == null ? "text-slate-300" : delta < 0 ? "text-red-600" : delta > 0 ? "text-emerald-600" : "text-slate-400"}`}>
         {delta == null ? "no trend" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} vs prev`}
@@ -2297,12 +2297,12 @@ function ScorecardResult({ data }) {
           columns={[
             { key: "rule", label: "Rule", render: r => <span className="font-mono">{r.rule}</span> },
             { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
-            { key: "value", label: "Score", render: r => <span className={`font-bold ${Number(r.value) >= 90 ? "text-emerald-600" : Number(r.value) >= 70 ? "text-amber-600" : "text-red-600"}`}>{r.value != null && r.value !== "" ? `${r.value}%` : "—"}</span> },
-            { key: "rule_count", label: "Rules", render: r => r.rule_count ?? (r.exception != null ? `${r.exception} exc` : "—") },
-            { key: "score_trend", label: "Trend", render: r => r.score_trend == null ? "—" : <span className={r.score_trend < 0 ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>{r.score_trend > 0 ? "+" : ""}{r.score_trend}</span> },
+            { key: "value", label: "Score", render: r => <span className={`font-bold ${Number(r.value) >= 90 ? "text-emerald-600" : Number(r.value) >= 70 ? "text-amber-600" : "text-red-600"}`}>{r.value != null && r.value !== "" ? `${r.value}%` : "-"}</span> },
+            { key: "rule_count", label: "Rules", render: r => r.rule_count ?? (r.exception != null ? `${r.exception} exc` : "-") },
+            { key: "score_trend", label: "Trend", render: r => r.score_trend == null ? "-" : <span className={r.score_trend < 0 ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>{r.score_trend > 0 ? "+" : ""}{r.score_trend}</span> },
             { key: "lastRun", label: "Last run", render: r => {
                 const t = Number(r.lastRun);
-                return r.lastRun ? (Number.isFinite(t) && t > 1e12 ? new Date(t).toISOString().slice(0, 10) : String(r.lastRun)) : "—";
+                return r.lastRun ? (Number.isFinite(t) && t > 1e12 ? new Date(t).toISOString().slice(0, 10) : String(r.lastRun)) : "-";
               } },
           ]}
           rows={data?.scores || []}
@@ -2484,7 +2484,7 @@ function AlertResult({ data, monitorContext }) {
       <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
         <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">Alert threshold</div>
         <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-mono font-semibold text-slate-700 flex-1 min-w-0 truncate" title={a.asset_name}>{a.asset_name || "—"}</span>
+          <span className="text-xs font-mono font-semibold text-slate-700 flex-1 min-w-0 truncate" title={a.asset_name}>{a.asset_name || "-"}</span>
           <span className="text-xs text-slate-500">drop ≥ <strong>{a.threshold ?? "?"}</strong> pts / {a.lookback_days ?? "?"}d</span>
           <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${firing ? "bg-red-100 text-red-700 border-red-300" : "bg-emerald-100 text-emerald-700 border-emerald-300"}`}>
             {firing ? "● FIRING" : "○ armed"}
@@ -2563,7 +2563,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
               { key: "name",  label: "Column", render: r => <span className="font-mono font-semibold">{r.name}</span> },
               { key: "nullpct", label: "Null %", render: r => {
                   const p = nullPctNum(r.stats.null_pct);
-                  if (p == null) return <span className="text-slate-400">—</span>;
+                  if (p == null) return <span className="text-slate-400">-</span>;
                   const bad = p > 10;
                   return (
                     <div className="flex items-center gap-2 min-w-[90px]">
@@ -2574,7 +2574,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
                 } },
               { key: "distinct", label: "Distinct", render: r => {
                   const dc = r.stats.distinct_count;
-                  if (dc == null) return <span className="text-slate-400">—</span>;
+                  if (dc == null) return <span className="text-slate-400">-</span>;
                   // Duplication signals a defect only on a near-unique column — a
                   // would-be identifier with repeats. Fire on the distinct/row ratio
                   // (>= ~0.9), not READS AS: POSITION_ID at 18/19 (0.95) gets a badge;
@@ -2582,7 +2582,7 @@ function ProfileResult({ data, scanSource, scanSchema, scanTable, profileObject 
                   const dup = totalRows && dc < totalRows && (dc / totalRows) >= 0.9;
                   return <span className="flex items-center gap-1.5">{dc.toLocaleString ? dc.toLocaleString() : dc}{dup ? <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">dup</span> : null}</span>;
                 } },
-              { key: "minmax", label: "Min / Max", render: r => <span className="font-mono text-slate-500">{String(r.stats.min_value ?? "—").slice(0, 16)} / {String(r.stats.max_value ?? "—").slice(0, 16)}</span> },
+              { key: "minmax", label: "Min / Max", render: r => <span className="font-mono text-slate-500">{String(r.stats.min_value ?? "-").slice(0, 16)} / {String(r.stats.max_value ?? "-").slice(0, 16)}</span> },
               { key: "reads", label: "Reads as", render: r => <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{readsAs(r.stats)}</span> },
             ]}
             rows={names.map(n => ({ name: n, stats: cols[n] || {} }))}
@@ -2648,7 +2648,7 @@ function RuleSpecsResult({ data }) {
         columns={[
           { key: "name", label: "Rule", render: r => <span className="font-mono font-medium">{r.name}</span> },
           { key: "dimension", label: "Dimension", render: r => <DimChip dim={r.dimension}/> },
-          { key: "description", label: "Description", render: r => <span className="text-slate-500">{(r.description || "—").slice(0, 60)}</span> },
+          { key: "description", label: "Description", render: r => <span className="text-slate-500">{(r.description || "-").slice(0, 60)}</span> },
           { key: "lastUpdatedTime", label: "Updated" },
         ]}
         rows={rules}
@@ -2721,7 +2721,7 @@ function MappingTasksResult({ data }) {
         columns={[
           { key: "name", label: "Name", render: r => <span className="font-medium">{r.name}</span> },
           { key: "id", label: "Task ID", render: r => <span className="font-mono text-slate-500">{r.id}</span> },
-          { key: "scheduleId", label: "Schedule", render: r => r.scheduleId ? <span className="text-emerald-600 font-medium">scheduled</span> : <span className="text-slate-400">—</span> },
+          { key: "scheduleId", label: "Schedule", render: r => r.scheduleId ? <span className="text-emerald-600 font-medium">scheduled</span> : <span className="text-slate-400">-</span> },
           { key: "updateTime", label: "Updated" },
         ]}
         rows={data?.tasks || []}
@@ -4737,8 +4737,8 @@ function App() {
                       </div>
                       {r.entry && (
                         <div className="text-xs text-slate-500 text-right shrink-0">
-                          <div><span className="text-emerald-600 font-semibold">{r.entry.success_target_rows ?? "—"}</span> rows ok</div>
-                          <div><span className={r.entry.failed_target_rows ? "text-red-500 font-semibold" : ""}>{r.entry.failed_target_rows ?? "—"}</span> failed</div>
+                          <div><span className="text-emerald-600 font-semibold">{r.entry.success_target_rows ?? "-"}</span> rows ok</div>
+                          <div><span className={r.entry.failed_target_rows ? "text-red-500 font-semibold" : ""}>{r.entry.failed_target_rows ?? "-"}</span> failed</div>
                         </div>
                       )}
                     </div>
