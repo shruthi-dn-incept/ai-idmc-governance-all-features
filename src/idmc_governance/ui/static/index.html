@@ -184,6 +184,7 @@ const SCHEMA_TO_DATABASE = {
   GOVTEST_BILLING: "GOVERNANCE_SCALE_TEST_C", GOVTEST_ENROLLMENT: "GOVERNANCE_SCALE_TEST_C",
   GOVTEST_RISK: "GOVERNANCE_SCALE_TEST_C",    GOVTEST_UTILIZATION: "GOVERNANCE_SCALE_TEST_C",
   REGISTRY: "GOVERNANCE",               RND_CLINICAL: "RND",
+  CLINICAL_DEMO: "RND",
 };
 // Case-insensitive lookup — Snowflake schema names are upper-case in the catalog.
 const dbForSchema = (schema) => SCHEMA_TO_DATABASE[schema] || SCHEMA_TO_DATABASE[(schema || "").toUpperCase()] || "";
