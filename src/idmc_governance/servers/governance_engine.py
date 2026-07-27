@@ -3539,10 +3539,16 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
     Returns: {asset:{id,name,classType,location}, column_count,
               profiled_count, columns:{col_name: stats_dict, ...}}.
 
-      stats_dict keys depend on what the profile produced; common ones:
-        data_type, precision, scale, null_count, null_pct, distinct_count,
-        distinct_pct, min_value, max_value, top_values, patterns,
-        avg_length, blank_count.
+      stats_dict carries CDGC's raw core.* profiling fields PLUS flat snake_case
+      aliases mapped from them (the shape the UI and recommend_dq_rules read):
+        null_count      <- core.nullCount          null_pct  <- core.nullPercentage (0-100)
+        distinct_count  <- core.distinctCount       distinct_pct <- core.distinctPercentage
+        blank_count     <- core.blankCount          duplicate_count <- core.duplicateCount
+        data_type       <- systemAttributes / core.dataType
+      min_value / max_value are set ONLY when CDGC exposes a genuine value min/max
+      (numerics, dates). For string columns CDGC returns minLength / maxLength
+      (lengths), which are deliberately NOT mapped, so a length never renders where
+      a value belongs.
 
     Raises: RuntimeError if the table can't be located in CDGC.
     """
@@ -3581,8 +3587,30 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
             "data_type": sys_attrs.get("core.dataType") or sys_attrs.get("dataType"),
         }
         if profile:
-            # Normalize the profile dict keys to flatter names where possible.
-            col_stats.update(profile)
+            col_stats.update(profile)   # keep the raw core.* fields (superset; other callers unaffected)
+            # Map CDGC's core.* profiling keys to the flat snake_case names the UI and
+            # recommend_dq_rules consume. Without this the app reads every stat as absent
+            # (renders "all-bare") even though CDGC holds them.
+            for _src, _dst in (("core.nullCount", "null_count"),
+                               ("core.nullPercentage", "null_pct"),        # 0-100; UI normalizes
+                               ("core.distinctCount", "distinct_count"),
+                               ("core.distinctPercentage", "distinct_pct"),
+                               ("core.blankCount", "blank_count"),
+                               ("core.duplicateCount", "duplicate_count")):
+                _v = profile.get(_src)
+                if _v is not None:
+                    col_stats[_dst] = _v
+            # MIN/MAX: map ONLY a genuine value min/max (numerics/dates). CDGC exposes
+            # minLength/maxLength for strings (and no value min/max on these sources);
+            # a length in a MIN/MAX column would read "2 / 2" where the value is "AU / US"
+            # — a visible contradiction — so lengths are deliberately NOT mapped.
+            for _src, _dst in (("core.min", "min_value"), ("core.minValue", "min_value"),
+                               ("core.max", "max_value"), ("core.maxValue", "max_value")):
+                _v = profile.get(_src)
+                if _v is not None and col_stats.get(_dst) is None:
+                    col_stats[_dst] = _v
+            if not col_stats.get("data_type"):
+                col_stats["data_type"] = profile.get("core.dataType")
             profiled_count += 1
         else:
             col_stats["_no_profile_data"] = True
