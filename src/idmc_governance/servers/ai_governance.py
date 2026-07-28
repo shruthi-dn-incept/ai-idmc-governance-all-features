@@ -3685,6 +3685,11 @@ def govern(
             "table_name":        table_name,
             "column_ids":        column_ids,
             "catalog_origin":    catalog_origin,
+            # Full known-type scanned column set. The gated step-8 path resolves
+            # approved recommendations against this so a steward can approve ANY
+            # scanned column, not only the demo-friendly _select_key_columns subset.
+            # The template path keeps using the 7-column subset above.
+            "all_column_ids":    all_columns,
         }
         if source_table_path:
             dq_params["source_table_path"] = source_table_path

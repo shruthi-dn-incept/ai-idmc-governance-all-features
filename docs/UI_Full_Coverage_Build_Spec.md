@@ -372,6 +372,34 @@ The badge disappearing is the tell worth generalising: when evidence-derived out
 
 ---
 
+## The step 7 gate does not control step 8
+
+**Established by source reading, 27 Jul.** This is the most consequential open defect in the product, because the claim it breaks is the one the product is sold on.
+
+`create_generic_dq_rules` derives dimensions from each scanned column's data type — varchar gets COMPLETENESS and VALIDITY, a numeric key gets COMPLETENESS and UNIQUENESS, a date gets COMPLETENESS and TIMELINESS. It has no parameter for recommendations. The frontend posts `{}` to `/api/step/dq_rules`; `app.py` builds the call from scan-derived plan parameters only; approvals are never read. `approvedRecs` reaches exactly two places: a display banner and localStorage.
+
+So approving five recommendations, approving none, or approving a different set produces identical output. On `COUNTRY_REF` — four varchar columns, zero recommendations approved — step 8 still created eight occurrences across two rule specs.
+
+**The banner makes it worse.** It renders *"N evidence-backed recommendations approved at step 7 and carried into this run"* — asserting a causal link that does not exist. This is the fifth instance of the UI asserting what the backend does not do, after `target_type`, the Weekly schedule, the ErrorBoundary's save claim, and `get_profile_results`' docstring. It is the most damaging of the five: the others overstate a feature, this one overstates the **differentiator**.
+
+Note also that when nothing is approved the banner does not render at all, so rules appear with nothing on screen indicating they came from a data-type template rather than from evidence.
+
+**What is actually true**, and what any external claim must be limited to: step 7 recommends rules from measured profile evidence; a steward reviews before anything is written; step 8 creates rule specifications in CDGC. What is **not** true is that the rules step 8 creates are the ones approved at step 7.
+
+**The fix** is to pass the approved recommendations from the frontend into the step 8 route, thread them through `app.py`, and give `create_generic_dq_rules` a parameter that, when supplied, drives rule creation from the approved set rather than from the column-type template. The template becomes the fallback for the unapproved path rather than the only behaviour.
+
+**Design ruling: a column with no approved recommendation gets no rule.** Not a template default. This is what makes the gate load-bearing — approve less, create less, and the count on screen changes to match.
+
+The obvious objection is that a clean table then receives no rules at all. That is correct behaviour, and the answer preserves the architecture rather than working around it: if baseline rules are wanted on clean data, **step 7's recommender should propose them**, so they pass through the gate like everything else. Step 8 must never add rules behind the gate that no one approved. The moment it does, the gate is advisory again.
+
+**Consequence to expect, not a regression.** After this lands, `COUNTRY_REF` produces zero recommendations at step 7 and therefore zero rules at step 8. That is the rule working. It also means rule counts, occurrence counts, step 9's bindings, step 10's active-rules card, and step 11's composite and dimension scores all move. Re-baseline once after the change rather than chasing the numbers through the build.
+
+**The banner must become truthful in both directions.** Today it renders only on the approved path, so template-driven rules appear with nothing on screen saying where they came from. After the fix it should state which path produced the rules either way.
+
+This is not a demo-day fix. It is the first thing to build after.
+
+---
+
 ## Deployment verification
 
 Two gaps in how builds reach the container, both found the expensive way.

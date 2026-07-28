@@ -3689,7 +3689,10 @@ function App() {
       // Step 8 = rules + occurrences only; the score upload moved to step 10
       // (upload_dq_scores substep). /api/step/data_quality (rules+scores fused)
       // stays server-side for the run-all path but no ladder step calls it.
-      else if (stepId === "data_quality")      data = await apiPost("/api/step/dq_rules", {}, sig);
+      // Gate wiring: forward the step 7 approved (column, dimension) set so step 8
+      // creates ONLY approved rules. An empty array is still a gated run (creates
+      // nothing); the column-type template is reserved for non-UI callers.
+      else if (stepId === "data_quality")      data = await apiPost("/api/step/dq_rules", { approved_rules: (resultsRef.current.recommend_rules?.approved) || [] }, sig);
       else if (stepId === "publish_governance")    data = await apiPost("/api/step/mcc_scan", {}, sig);
       else if (stepId === "monitor_quality") {
         // Entered cold by design — the selector inherits nothing.
@@ -5206,13 +5209,37 @@ function App() {
               </div>
             )}
 
-            {/* Step 8: the approved step 7 selection is carried into this run */}
-            {activeStep === "data_quality" && approvedRecs.length > 0 && (
-              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
-                ❋ <strong>{approvedRecs.length} evidence-backed recommendation{approvedRecs.length === 1 ? "" : "s"}</strong> approved at step 7 and carried into this run:
-                <span className="font-mono"> {approvedRecs.slice(0, 5).map(r => r.name).join(", ")}{approvedRecs.length > 5 ? ` +${approvedRecs.length - 5} more` : ""}</span>
-              </div>
-            )}
+            {/* Step 8: state which path produced the rules, in both directions.
+                Reads the step 8 result (rule_source), so template-driven rules are
+                never shown unlabelled and an empty gated run says so explicitly. */}
+            {activeStep === "data_quality" && results.data_quality?.rules?.rule_source && (() => {
+              const _r    = results.data_quality.rules;
+              const _src  = _r.rule_source;
+              const _appr = approvedRecs || [];
+              const _ruleN = (_r.rules_created || []).length;
+              const _occs  = _r.occurrences_registered || [];
+              const _occN  = _occs.length;
+              if (_src === "approved") {
+                if (_appr.length > 0) {
+                  return (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700">
+                      ❋ <strong>{_appr.length} approved recommendation{_appr.length === 1 ? "" : "s"}</strong> from step 7 drove this run. One rule per approved column and dimension; nothing was added behind the gate:
+                      <span className="font-mono"> {_occs.slice(0, 5).map(o => o.name).join(", ")}{_occs.length > 5 ? ` +${_occs.length - 5} more` : ""}</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+                    ⚠ <strong>No recommendations were approved at step 7</strong>, so this step created no rules ({_ruleN} specs, {_occN} occurrences). This is the gate working. Approve rules at step 7 to create them here.
+                  </div>
+                );
+              }
+              return (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
+                  Rules created from the <strong>column-type template</strong> (no approved set supplied). Dimensions were inferred from each column's data type, not from step 7 recommendations.
+                </div>
+              );
+            })()}
 
             {/* Run individually — one row for every step, driven by the STEPS
                 declaration. Substeps are labelled by TOOL name (the ladder table

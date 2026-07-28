@@ -1107,8 +1107,16 @@ async def step_apply_curation_links(req: ApplyCurationRequest):
 
 # ── Step 7: DQ Rules ──────────────────────────────────────────────────────────
 
+class DqRulesRequest(BaseModel):
+    # Approved (column, dimension) recommendations from the step 7 gate. When present
+    # (even as []), step 8 creates ONLY these — the gate is load-bearing and a column
+    # with no approved recommendation gets no rule. When None (non-UI callers), the
+    # engine falls back to the column-type template. The UI always sends this key.
+    approved_rules: list[dict] | None = None
+
+
 @app.post("/api/step/dq_rules")
-async def step_dq_rules():
+async def step_dq_rules(req: DqRulesRequest = DqRulesRequest()):
     try:
         plan = await _govern("Create DQ rules for the scanned table", step="dq_rules")
         next_actions = plan.get("result", {}).get("next_actions", [])
@@ -1123,6 +1131,15 @@ async def step_dq_rules():
                 }
                 if p.get("source_table_path"):
                     call_params["source_table_path"] = p["source_table_path"]
+                # Gate wiring: forward the step 7 approved set verbatim. Passing the key
+                # (even []) puts the engine in gated mode; omitting it keeps the template.
+                if req.approved_rules is not None:
+                    call_params["approved_rules"] = req.approved_rules
+                    # Gated run: resolve approvals against the FULL scanned column set,
+                    # not the 7-column template subset, so an approved column outside
+                    # that subset creates its rule instead of raising as "not scanned".
+                    if p.get("all_column_ids"):
+                        call_params["column_ids"] = p["all_column_ids"]
                 rules = await _call(GOVERNANCE_ENGINE_URL, "create_generic_dq_rules", call_params)
         if rules:
             occurrences = rules.get("occurrences_registered", [])

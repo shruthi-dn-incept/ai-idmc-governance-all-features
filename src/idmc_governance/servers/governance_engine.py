@@ -2341,6 +2341,7 @@ def create_generic_dq_rules(
     threshold: float = 80.0,
     source_table_path: str | None = None,
     cleanup_existing: bool = False,
+    approved_rules: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Create diversified DQ rules and register occurrences on every column supplied.
 
@@ -2376,8 +2377,21 @@ def create_generic_dq_rules(
                          Disabled for now: during a CDGC outage the delete can succeed
                          while the recreate fails, silently dropping DQROs. Pass True
                          explicitly to opt back into cleanup of stale/errored occurrences.
+      approved_rules:    Approved (column, dimension) recommendations from the step 7
+                         gate, e.g. [{"column": "CUSTOMER_NAME", "dimension": "COMPLETENESS"}].
+                         When supplied (even as []), this is a GATED run: rules are created
+                         ONLY for these pairs, and a scanned column with no approved
+                         recommendation gets no rule — the column-type template does NOT
+                         fill gaps inside a gated run. When None (non-gated callers such as
+                         the run-all pipeline or a direct tool call), dimensions fall back
+                         to the per-column type template. Column names are matched
+                         case-insensitively against column_ids and dimensions are
+                         upper-cased before matching. An approved column absent from
+                         column_ids raises rather than being skipped, so a missing rule can
+                         never be mistaken for the gate legitimately declining to create one.
 
-    Returns: {rules_created, occurrences_registered, mapping_tasks_created, errors, summary}
+    Returns: {rules_created, occurrences_registered, mapping_tasks_created, errors,
+              rule_source ("approved"|"template"), approved_count, summary}
     """
     rules_created: list[dict[str, Any]] = []
     occurrences: list[dict[str, Any]] = []
@@ -2423,76 +2437,123 @@ def create_generic_dq_rules(
         dim_rule_cache[dim] = rule_id
         return rule_id
 
-    for col in column_ids:
+    # ------------------------------------------------------------------
+    # Decide the (column, dimension) work list.
+    #   approved_rules is not None  -> GATED run: create ONLY the approved
+    #     pairs. A scanned column with no approved recommendation gets no
+    #     rule; the column-type template never fills gaps inside a gated run.
+    #   approved_rules is None      -> non-gated caller (run-all pipeline /
+    #     direct tool): fall back to the per-column type template.
+    # An approved pair whose column is not in the scanned set is a HARD
+    # error, not a silent skip: a missing rule must never be mistaken for
+    # the gate legitimately declining to create one.
+    # ------------------------------------------------------------------
+    driven = approved_rules is not None
+    work_items: list[tuple[dict[str, str], str]] = []
+
+    if driven:
+        by_norm = {
+            (c.get("column_name") or "").strip().upper(): c
+            for c in column_ids if (c.get("column_name") or "").strip()
+        }
+        unmatched: list[str] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for ar in (approved_rules or []):
+            raw_col = (ar.get("column") or ar.get("column_name") or "").strip()
+            raw_dim = (ar.get("dimension") or "").strip()
+            if not raw_col or not raw_dim:
+                unmatched.append(f"{raw_col or '?'}/{raw_dim or '?'} (missing column or dimension)")
+                continue
+            key = raw_col.upper()
+            col = by_norm.get(key)
+            if col is None:
+                unmatched.append(f"{raw_col}/{raw_dim} (column not in scanned set)")
+                continue
+            pair = (key, raw_dim.upper())
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            work_items.append((col, raw_dim.upper()))
+        if unmatched:
+            raise RuntimeError(
+                "create_generic_dq_rules: approved recommendation(s) did not match a "
+                "scanned column — refusing to create a partial rule set that could be "
+                "mistaken for the gate declining. Unmatched: " + "; ".join(unmatched)
+            )
+    else:
+        for col in column_ids:
+            col_name  = col.get("column_name", "")
+            data_type = col.get("data_type", "unknown")
+            col_dims  = dimensions if dimensions else _infer_dimensions_for_column(col_name, data_type)
+            for dim in col_dims:
+                work_items.append((col, dim))
+
+    for col, dim in work_items:
         col_name  = col.get("column_name", "")
         col_id    = col.get("column_id", "")
         data_type = col.get("data_type", "unknown")
-
-        col_dims = dimensions if dimensions else _infer_dimensions_for_column(col_name, data_type)
-
-        for dim in col_dims:
-            rule_id = _ensure_rule(dim)
-            if not rule_id:
-                continue
-            occ_name = f"DQ_{col_name}_{dim}"
-            try:
-                occ = register_in_cdgc(
-                    rule_spec_id=rule_id,
-                    column_id=col_id,
-                    occurrence_name=occ_name,
-                    dimension=dim,
-                    criticality=criticality,
-                    target=target,
-                    threshold=threshold,
-                    column_identity_type="INTERNAL",
-                    catalog_origin=catalog_origin,
-                )
-                occurrences.append({
-                    "name":          occ_name,
-                    "column":        col_name,
-                    "data_type":     data_type,
-                    "dimension":     dim,
-                    "occurrence_id": occ.get("occurrence_id"),
-                    "internal_id":   occ.get("internal_id"),
-                })
-            except Exception as e:
-                err_str = str(e)
-                # If the occurrence already exists, search CDGC for it and recover its internal_id
-                # so that score upload (step 8) still works on re-runs.
-                recovered = False
-                if any(kw in err_str.upper() for kw in ("ALREADY", "DUPLICATE", "CONTENT_FAILED", "EXISTS")):
-                    try:
-                        search_url = (
-                            f"{CDGC_API_BASE}/data360/search/v1/assets"
-                            f"?knowledgeQuery={quote(occ_name)}&segments=summary,systemAttributes"
-                        )
-                        sr = _request_cdgc("POST", search_url, json={"from": 0, "size": 20})
-                        if sr.status_code == 200:
-                            for hit in (sr.json() or {}).get("hits", []):
-                                ctype = (hit.get("systemAttributes") or {}).get("core.classType") or ""
-                                if "RuleInstance" not in ctype:
-                                    continue
-                                hit_name = (hit.get("summary") or {}).get("core.name") or ""
-                                if hit_name != occ_name:
-                                    continue
-                                internal_id = (hit.get("systemAttributes") or {}).get("core.identity") or hit.get("id") or ""
-                                public_id   = (hit.get("summary") or {}).get("core.externalId") or ""
-                                if internal_id:
-                                    occurrences.append({
-                                        "name":          occ_name,
-                                        "column":        col_name,
-                                        "data_type":     data_type,
-                                        "dimension":     dim,
-                                        "occurrence_id": public_id,
-                                        "internal_id":   internal_id,
-                                        "note":          "already exists",
-                                    })
-                                    recovered = True
-                                    break
-                    except Exception:
-                        pass
-                if not recovered:
-                    errors.append(f"register {col_name}/{dim}: {err_str[:120]}")
+        rule_id = _ensure_rule(dim)
+        if not rule_id:
+            continue
+        occ_name = f"DQ_{col_name}_{dim}"
+        try:
+            occ = register_in_cdgc(
+                rule_spec_id=rule_id,
+                column_id=col_id,
+                occurrence_name=occ_name,
+                dimension=dim,
+                criticality=criticality,
+                target=target,
+                threshold=threshold,
+                column_identity_type="INTERNAL",
+                catalog_origin=catalog_origin,
+            )
+            occurrences.append({
+                "name":          occ_name,
+                "column":        col_name,
+                "data_type":     data_type,
+                "dimension":     dim,
+                "occurrence_id": occ.get("occurrence_id"),
+                "internal_id":   occ.get("internal_id"),
+            })
+        except Exception as e:
+            err_str = str(e)
+            # If the occurrence already exists, search CDGC for it and recover its internal_id
+            # so that score upload (step 8) still works on re-runs.
+            recovered = False
+            if any(kw in err_str.upper() for kw in ("ALREADY", "DUPLICATE", "CONTENT_FAILED", "EXISTS")):
+                try:
+                    search_url = (
+                        f"{CDGC_API_BASE}/data360/search/v1/assets"
+                        f"?knowledgeQuery={quote(occ_name)}&segments=summary,systemAttributes"
+                    )
+                    sr = _request_cdgc("POST", search_url, json={"from": 0, "size": 20})
+                    if sr.status_code == 200:
+                        for hit in (sr.json() or {}).get("hits", []):
+                            ctype = (hit.get("systemAttributes") or {}).get("core.classType") or ""
+                            if "RuleInstance" not in ctype:
+                                continue
+                            hit_name = (hit.get("summary") or {}).get("core.name") or ""
+                            if hit_name != occ_name:
+                                continue
+                            internal_id = (hit.get("systemAttributes") or {}).get("core.identity") or hit.get("id") or ""
+                            public_id   = (hit.get("summary") or {}).get("core.externalId") or ""
+                            if internal_id:
+                                occurrences.append({
+                                    "name":          occ_name,
+                                    "column":        col_name,
+                                    "data_type":     data_type,
+                                    "dimension":     dim,
+                                    "occurrence_id": public_id,
+                                    "internal_id":   internal_id,
+                                    "note":          "already exists",
+                                })
+                                recovered = True
+                                break
+                except Exception:
+                    pass
+            if not recovered:
+                errors.append(f"register {col_name}/{dim}: {err_str[:120]}")
 
     # ------------------------------------------------------------------
     # Optionally create M_DQ_Generic mapping tasks so CDQ can execute rules
@@ -2553,12 +2614,15 @@ def create_generic_dq_rules(
         "occurrences_registered": occurrences,
         "mapping_tasks_created":  mapping_tasks_created,
         "errors":                 errors,
+        "rule_source":            "approved" if driven else "template",
+        "approved_count":         len(approved_rules) if driven else 0,
         "summary": {
             "rule_count":         len(rules_created),
             "occurrence_count":   len(occurrences),
             "mapping_task_count": len(mapping_tasks_created),
             "deleted_count":      deleted_count,
             "error_count":        len(errors),
+            "rule_source":        "approved" if driven else "template",
         },
     }
 
