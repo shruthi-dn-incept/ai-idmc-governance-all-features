@@ -29,6 +29,10 @@ Write-Host "  Done." -ForegroundColor Green
 
 # ── 3. Build & push via ACR Tasks ────────────────────────────────────────────
 Write-Host "[3/6] Building image in ACR (takes ~5 min)..." -ForegroundColor Yellow
+# Force UTF-8 so az CLI log-streaming can't crash on a non-cp1252 char and leave $?
+# false on a build that actually succeeded (the guard below would misread that).
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 az acr build `
   --registry $ACR_NAME `
   --image $IMAGE_TAG `
