@@ -34,6 +34,7 @@ az acr build `
   --image $IMAGE_TAG `
   --file docker/Dockerfile.ui `
   .
+if (-not $?) { throw "az acr build failed - aborting before redeploy (prevents a silently stale deploy)." }
 Write-Host "  Image pushed: $ACR_NAME.azurecr.io/$IMAGE_TAG" -ForegroundColor Green
 
 # ── 4. Ensure Container Apps environment ──────────────────────────────────────
