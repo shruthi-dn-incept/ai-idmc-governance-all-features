@@ -2,6 +2,22 @@
 # Deploys the governance UI as a long-running Azure Container App on port 9080.
 # Usage: .\deploy\azure_deploy_ui.ps1
 # Run from repo root where az CLI is available.
+#
+# ── RECOVERY / ROLLBACK: redeploy the last known-good image WITHOUT rebuilding ──
+# The verified known-good image is tagged immutably as  governance-ui:demo-ok
+#   digest: sha256:345c0c97d6165ed761b78e5e080afc534893ceb88e0cd764d80fbb78c887a000
+#
+# This UPDATES IN PLACE — it creates a new revision from that image and does NOT
+# rebuild and does NOT delete the app (contrast step [6/6] below, which runs
+# `az containerapp delete` then `create`). The current healthy revision keeps
+# serving until the new one is healthy, so a bad image cannot black out the app
+# the way a fresh build + delete/recreate did on 2026-07-28:
+#
+#   az containerapp update --name govtest-ui --resource-group govtest-scale-rg --image govtestscaleacr.azurecr.io/governance-ui:demo-ok
+#
+# Digest-pinned variant (immune to any future retag of demo-ok):
+#   az containerapp update --name govtest-ui --resource-group govtest-scale-rg --image govtestscaleacr.azurecr.io/governance-ui@sha256:345c0c97d6165ed761b78e5e080afc534893ceb88e0cd764d80fbb78c887a000
+# ────────────────────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
 
