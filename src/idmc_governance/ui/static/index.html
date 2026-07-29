@@ -97,7 +97,7 @@ const STEPS = [
       { tool: "detect_glossary_issues",  key: "detect_glossary_issues",  route: "/api/step/detect_glossary_issues",  form: "health", label: "Glossary health check" },
     ] },
   { id: "recommend_rules", num: 7, label: "Recommend Rules", icon: "❋", route: "/api/step/recommend_rules", gate: true,
-    desc: "Evidence-backed DQ rule recommendations from the step 3 profile, reviewed at a gate. Approving pushes the selection into step 8; rules authored here join it.",
+    desc: "Evidence-backed DQ rule recommendations from the step 3 profile, reviewed at a gate. Approving pushes the selection into step 8.",
     substeps: [
       { tool: "create_dq_rules",          key: "create_dq_rules",          route: "/api/step/create_dq_rules",          form: "rule", label: "Author rules" },
       { tool: "validate_rule",            key: "validate_rule",            route: "/api/step/validate_rule",            form: "ruleValidate", label: "Validate rule" },
@@ -4635,8 +4635,7 @@ function App() {
                 </div>
                 <p className="text-xs text-slate-400">
                   <span className="font-mono">validate_rule</span> pre-flights the logic before it deploys;
-                  <span className="font-mono"> create_dq_rules</span> writes it to CDQ and adds it to the selection above:
-                  one approval record covers everything written.
+                  <span className="font-mono"> create_dq_rules</span> writes it straight to CDQ, outside the step 8 gate.
                 </p>
               </div>
             )}
@@ -5131,7 +5130,7 @@ function App() {
                   approving={false}
                   groups={recGroups}
                   banner={{ title: "Review before pushing to step 8",
-                            body: "Each row carries the profiling evidence behind it. Deselect what you don't want; rules authored below join the selection." }}
+                            body: "Each row carries the profiling evidence behind it. Deselect what you don't want; rules authored below go straight to CDQ." }}
                   approveLabel="Approve & Push to Step 8"
                   busyLabel="Approving…"
                 />
