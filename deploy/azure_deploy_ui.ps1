@@ -38,7 +38,10 @@ az acr build `
   --image $IMAGE_TAG `
   --file docker/Dockerfile.ui `
   .
-if (-not $?) { throw "az acr build failed - aborting before redeploy (prevents a silently stale deploy)." }
+# No build-exit guard here: colorama's cp1252 log-stream crash makes $? unreliable on this
+# Windows host even when the ACR build succeeds (verified twice, ca4q/ca4r both Succeeded
+# while $? was false). Verify the deploy by revision-name change + served-marker check, not
+# by exit code.
 Write-Host "  Image pushed: $ACR_NAME.azurecr.io/$IMAGE_TAG" -ForegroundColor Green
 
 # ── 4. Ensure Container Apps environment ──────────────────────────────────────
