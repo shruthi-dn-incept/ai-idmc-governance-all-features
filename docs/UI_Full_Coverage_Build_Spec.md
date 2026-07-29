@@ -398,6 +398,21 @@ The obvious objection is that a clean table then receives no rules at all. That 
 
 This is not a demo-day fix. It is the first thing to build after.
 
+### Step 7 evidence is numerically wrong on the Informatica engine (post-demo; do not fix now)
+
+**Established 29 Jul.** On the Informatica profile path (`get_profile_results`), step 7's evidence line is garbage for any table with nulls. Observed: `RESOLUTION_DATE has 6750.0% nulls (81 / 0 rows)` — over 100%, zero denominator.
+
+Root cause is a boundary unit-mismatch, not a recommender bug:
+- `get_profile_results` maps `core.nullPercentage` (0-100) straight to `null_pct` — the field comment itself reads *"0-100; UI normalizes"*.
+- `_check_nulls` treats `null_pct` as a 0-1 fraction and renders `null_pct * 100`, so 67.5% becomes 6750.0%.
+- `get_profile_results` never sets `total_rows`, so `recommend_dq_rules` reads `total = 0` and the denominator renders `/ 0 rows`.
+
+The Warehouse path (`compute_profile_from_snowflake`) is correct — it computes a real 0-1 fraction and a real row count. COUNTRY_REF escapes only because it is null-free, so `_check_nulls` returns nothing. CUSTOMER_POSITIONS is fine on the demo (Warehouse) path but would show the same garbage if profiled through the Informatica service.
+
+**Fix at the `get_profile_results` boundary** — divide `core.nullPercentage` by 100 and carry a real `total_rows` — NOT in `_check_nulls`, whose 0-1 fraction assumption is the correct contract (the Warehouse path already honours it).
+
+This is the **sixth instance of the UI asserting what the backend does not do**, after `target_type`, the Weekly schedule, the ErrorBoundary's save claim, `get_profile_results`' docstring, and the step-7 banner. It is subtler than the others: the `null_pct` mapping's own comment ("UI normalizes") admits the value is correct for only one of its two consumers — right for the UI, which normalizes; wrong for `recommend_dq_rules`, which assumes a fraction.
+
 ---
 
 ## Deployment verification
