@@ -2727,7 +2727,7 @@ function CreateRuleResult({ data }) {
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-0.5">
       <div>✓ Rule <strong>{data?.name}</strong> created, state <span className="font-mono">{data?.documentState}</span> · dimension {data?.dimension}</div>
       {data?.ui_url && <a href={data.ui_url} target="_blank" rel="noreferrer" className="text-brand underline">Open in CDQ ↗</a>}
-      <div className="text-emerald-700">Added to the step 7 selection; it is approved with the rest.</div>
+      <div className="text-emerald-700">Created directly in CDQ — it does not pass through the step 8 gate.</div>
     </div>
   );
 }
