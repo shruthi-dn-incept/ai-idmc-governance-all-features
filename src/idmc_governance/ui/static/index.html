@@ -3457,14 +3457,11 @@ function App() {
     try {
       const data = await apiPost(ss.route, body);
       settle(data);
-      // A rule authored at the gate joins the selection and is approved with the rest.
-      if (ss.key === "create_dq_rules" && data?.id) {
-        setRecItems(prev => prev.length
-          ? [...prev, { type: data.dimension || ruleForm.dimension, name: data.name,
-                        subtitle: "authored manually, already in CDQ (" + (data.documentState || "?") + ")" }]
-          : prev);
-        setRecSelected(prev => { const n = new Set(prev); n.add(data.name); return n; });
-      }
+      // Authored rules (create_dq_rules) are NOT fed into the approved set. An authored
+      // rule is a table-level spec with no column; step 8 creates per-column occurrences
+      // matched on (column, dimension), so it can never be placed there — and the rule is
+      // already created in CDQ. Feeding it in only trips seam (c)'s fail-loud. The substep
+      // result card still shows what was authored; it just doesn't join the gate selection.
       // A triggered run joins the live monitoring panel.
       if (ss.key === "run_task" && data?.runId) {
         setJobRuns(prev => [{ runId: data.runId, taskId: body.task_id, taskName: data.taskName || body.task_id, entry: null, state_label: "QUEUED" }, ...prev]);
