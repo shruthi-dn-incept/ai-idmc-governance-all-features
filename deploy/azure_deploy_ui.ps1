@@ -5,7 +5,8 @@
 #
 # ── RECOVERY / ROLLBACK: redeploy the last known-good image WITHOUT rebuilding ──
 # The verified known-good image is tagged immutably as  governance-ui:demo-ok
-#   digest: sha256:345c0c97d6165ed761b78e5e080afc534893ceb88e0cd764d80fbb78c887a000
+#   digest: sha256:8ea39b6fdd4a97a19db9f6321f4b97db42061c6c43194a9f274621e8abd36d83
+#   NOTE: this digest pin must be updated whenever demo-ok is re-tagged, or a rollback silently reverts further back than intended.
 #
 # This UPDATES IN PLACE — it creates a new revision from that image and does NOT
 # rebuild and does NOT delete the app (contrast step [6/6] below, which runs
@@ -16,7 +17,7 @@
 #   az containerapp update --name govtest-ui --resource-group govtest-scale-rg --image govtestscaleacr.azurecr.io/governance-ui:demo-ok
 #
 # Digest-pinned variant (immune to any future retag of demo-ok):
-#   az containerapp update --name govtest-ui --resource-group govtest-scale-rg --image govtestscaleacr.azurecr.io/governance-ui@sha256:345c0c97d6165ed761b78e5e080afc534893ceb88e0cd764d80fbb78c887a000
+#   az containerapp update --name govtest-ui --resource-group govtest-scale-rg --image govtestscaleacr.azurecr.io/governance-ui@sha256:8ea39b6fdd4a97a19db9f6321f4b97db42061c6c43194a9f274621e8abd36d83
 # ────────────────────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
