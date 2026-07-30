@@ -3601,11 +3601,14 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
                    from same-named columns/rules.
 
     Returns: {asset:{id,name,classType,location}, column_count,
-              profiled_count, columns:{col_name: stats_dict, ...}}.
+              profiled_count, total_rows, columns:{col_name: stats_dict, ...}}.
+
+      total_rows is the table row count (max core.numValuesProfiled across profiled
+      columns). recommend_dq_rules divides by it, so 0 here renders "N / 0 rows".
 
       stats_dict carries CDGC's raw core.* profiling fields PLUS flat snake_case
       aliases mapped from them (the shape the UI and recommend_dq_rules read):
-        null_count      <- core.nullCount          null_pct  <- core.nullPercentage (0-100)
+        null_count      <- core.nullCount          null_pct  <- core.nullPercentage / 100 (0-1 fraction)
         distinct_count  <- core.distinctCount       distinct_pct <- core.distinctPercentage
         blank_count     <- core.blankCount          duplicate_count <- core.duplicateCount
         data_type       <- systemAttributes / core.dataType
@@ -3630,6 +3633,7 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
     children = _cdgc_child_columns(table_id)
     columns: dict[str, Any] = {}
     profiled_count = 0
+    max_rows = 0   # table row count = max core.numValuesProfiled across profiled columns
     for child in children:
         # children entries are CDGC asset stubs with core.identity + core.name
         cid = child.get("core.identity") or child.get("id") or (child.get("summary") or {}).get("core.identity")
@@ -3656,7 +3660,7 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
             # recommend_dq_rules consume. Without this the app reads every stat as absent
             # (renders "all-bare") even though CDGC holds them.
             for _src, _dst in (("core.nullCount", "null_count"),
-                               ("core.nullPercentage", "null_pct"),        # 0-100; UI normalizes
+                               ("core.nullPercentage", "null_pct"),        # 0-100 from CDGC; ÷100 just below
                                ("core.distinctCount", "distinct_count"),
                                ("core.distinctPercentage", "distinct_pct"),
                                ("core.blankCount", "blank_count"),
@@ -3664,6 +3668,25 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
                 _v = profile.get(_src)
                 if _v is not None:
                     col_stats[_dst] = _v
+            # CDGC reports nullPercentage on a 0-100 scale, but every consumer of the
+            # null_pct alias expects a 0-1 fraction: recommend_dq_rules/_check_nulls
+            # (which multiplies by 100), the UI null-rate formatter and readsAs heuristic,
+            # and the taxonomy prompt — the same scale compute_profile_from_snowflake
+            # emits. Normalize here at the boundary so the two profile paths agree.
+            if col_stats.get("null_pct") is not None:
+                try:
+                    col_stats["null_pct"] = float(col_stats["null_pct"]) / 100.0
+                except (TypeError, ValueError):
+                    col_stats.pop("null_pct", None)
+            # numValuesProfiled is the per-column count of rows CDGC scanned; the table
+            # row count is the max across profiled columns. Carry it up as total_rows so
+            # recommend_dq_rules has a real denominator instead of 0 ("5 / 0 rows").
+            _nvp = profile.get("core.numValuesProfiled")
+            if _nvp is not None:
+                try:
+                    max_rows = max(max_rows, int(float(_nvp)))
+                except (TypeError, ValueError):
+                    pass
             # MIN/MAX: map ONLY a genuine value min/max (numerics/dates). CDGC exposes
             # minLength/maxLength for strings (and no value min/max on these sources);
             # a length in a MIN/MAX column would read "2 / 2" where the value is "AU / US"
@@ -3690,6 +3713,7 @@ def get_profile_results(object_name: str) -> dict[str, Any]:
         },
         "column_count":   len(columns),
         "profiled_count": profiled_count,
+        "total_rows":     max_rows,
         "columns":        columns,
     }
 
