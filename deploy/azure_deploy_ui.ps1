@@ -31,6 +31,8 @@ $ACR_NAME     = Get-EnvOr $cfg 'AZURE_ACR_NAME'        'govtestscaleacr'
 $ACA_ENV      = "govtest-env"
 $APP_NAME     = "govtest-ui"
 $IMAGE_TAG    = "governance-ui:latest"
+$BUILD_TAG    = "v$(Get-Date -Format 'yyyyMMdd-HHmm')"    # unique per-build tag
+$IMAGE_UNIQUE = "governance-ui:$BUILD_TAG"                # deployed tag: guarantees a new revision + a per-deploy rollback point
 
 Write-Host "`n=== Azure Container App UI Deployment ===" -ForegroundColor Cyan
 
@@ -52,13 +54,14 @@ $env:PYTHONIOENCODING = "utf-8"
 az acr build `
   --registry $ACR_NAME `
   --image $IMAGE_TAG `
+  --image $IMAGE_UNIQUE `
   --file docker/Dockerfile.ui `
   .
 # No build-exit guard here: colorama's cp1252 log-stream crash makes $? unreliable on this
 # Windows host even when the ACR build succeeds (verified twice, ca4q/ca4r both Succeeded
 # while $? was false). Verify the deploy by revision-name change + served-marker check, not
 # by exit code.
-Write-Host "  Image pushed: $ACR_NAME.azurecr.io/$IMAGE_TAG" -ForegroundColor Green
+Write-Host "  Image pushed: $ACR_NAME.azurecr.io/$IMAGE_TAG and :$BUILD_TAG" -ForegroundColor Green
 
 # ── 4. Ensure Container Apps environment ──────────────────────────────────────
 Write-Host "[4/6] Ensuring Container Apps environment '$ACA_ENV'..." -ForegroundColor Yellow
@@ -84,17 +87,27 @@ Get-Content ".env" | Where-Object { $_ -match "^\s*[^#].*=.*" } | ForEach-Object
     }
 }
 
-$REMOTE_IMAGE = "$ACR_SERVER/$IMAGE_TAG"
+$REMOTE_IMAGE = "$ACR_SERVER/$IMAGE_UNIQUE"   # deploy the UNIQUE tag, not :latest — a stable tag string can be a silent no-op under single-revision mode
 
-# Delete existing app to allow clean update
+# Update IN PLACE if the app exists (no delete); create only if the app is absent.
+# A new revision is built from the UNIQUE tag while the current healthy revision keeps
+# serving until the new one is Provisioned, so a crash-looping image can no longer black
+# out the UI (the 28 Jul delete-then-crash failure mode). Registry creds, secrets, the
+# 30 env vars and ingress persist on the app across update; update --image swaps only the
+# image. NOTE: update does NOT re-read .env — a changed env var/secret will not propagate
+# this way; use `az containerapp update --set-env-vars ...` (or delete+create) for that.
 $ErrorActionPreference = "Continue"
 $appExists = az containerapp show --name $APP_NAME --resource-group $RG --query name -o tsv 2>$null
 $ErrorActionPreference = "Stop"
 if ($appExists) {
-    Write-Host "  Deleting existing app for fresh deploy..." -ForegroundColor Gray
-    az containerapp delete --name $APP_NAME --resource-group $RG --yes --output none
-}
-
+    Write-Host "  Updating in place -> $IMAGE_UNIQUE (no delete)" -ForegroundColor Gray
+    az containerapp update `
+      --name $APP_NAME `
+      --resource-group $RG `
+      --image $REMOTE_IMAGE `
+      --output none
+} else {
+    Write-Host "  App absent -> first-time create with full config." -ForegroundColor Gray
 az containerapp create `
   --name $APP_NAME `
   --resource-group $RG `
@@ -142,6 +155,7 @@ az containerapp create `
   --secrets `
     "idmc-pass=$($env_vars['IDMC_PASS'])" `
   --output none
+}
 
 $fqdn = az containerapp show --name $APP_NAME --resource-group $RG --query properties.configuration.ingress.fqdn -o tsv
 
